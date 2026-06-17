@@ -1,5 +1,5 @@
 # LaBelle
-### From CUDA Kernels to Transformer Inference: Design, Optimization, and Evaluation of GPU-Accelerated Deep Learning Primitives
+### GPU-Accelerated Transformer Runtime: Custom CUDA Kernels, Profiling, and Performance Optimization
 ```
 PyTorch ONNX TensorRT CUDA FastAPI Linux Docker Triton Kubernetes Prometheus/Grafana Redis/Kafka
 ```

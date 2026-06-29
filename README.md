@@ -1,5 +1,8 @@
 # LaBelle
-### LLaMA Transformer Runtime: Custom CUDA Kernels, Profiling, and Performance Optimization
+## LLaMA Transformer Runtime: Custom CUDA Kernels, Profiling, and Performance Optimization
+
+### **Strictly limited to sub-1B parameter models**
+
 ```
 PyTorch ONNX TensorRT CUDA FastAPI Linux Docker Triton Kubernetes Prometheus/Grafana Redis/Kafka Nsight Systems, Nsight Compute, onnx, trt, Prometheus, Grafana, Weights & Biases.
 ```

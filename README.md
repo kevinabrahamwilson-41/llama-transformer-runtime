@@ -16,3 +16,13 @@ Kernel Fusion
 ```
 Specifying "single-batch inference" and "sub-1B parameter model" 
 ```
+
+```
+Phase 1 – CUDA Primitive Construction and Optimization
+Phase 2 – Transformer Block Construction and Optimization
+Phase 3 – Full LLaMA Runtime Construction and Optimization
+Phase 4 – Large-Scale Runtime Optimization
+Phase 5 – Integration with LLaMA Model Weights
+Phase 6 – Single-Batch Inference Implementation
+Phase 7 – Comprehensive Benchmarking and Performance Evaluation
+```

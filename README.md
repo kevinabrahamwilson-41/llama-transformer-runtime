@@ -7,7 +7,14 @@
 PyTorch ONNX TensorRT CUDA FastAPI Linux Docker Triton Kubernetes Prometheus/Grafana Redis/Kafka Nsight Systems, Nsight Compute, onnx, trt, Prometheus, Grafana, Weights & Biases.
 ```
 ---
-```Nsight
+
+* Bottom-up development to make debugging manageable.
+* Incremental optimization rather than optimizing everything at the end.
+* Inference only to avoid the substantially greater complexity of training.
+* Single-batch inference to keep the focus on runtime execution rather than request scheduling.
+* Sub-1B model size to match the available hardware and allow extensive experimentation.
+
+```
 CUDA Events
 Prometheus
 Grafana

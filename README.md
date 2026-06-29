@@ -12,3 +12,6 @@ Occupancy Analysis
 Memory Analysis
 Kernel Fusion
 ```
+```
+Specifying "single-batch inference" and "sub-1B parameter model" 
+```

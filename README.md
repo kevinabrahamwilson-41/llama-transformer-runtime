@@ -12,7 +12,7 @@ PyTorch ONNX TensorRT CUDA FastAPI Linux Docker Triton Kubernetes Prometheus/Gra
 * Incremental optimization rather than optimizing everything at the end.
 * Inference only to avoid the substantially greater complexity of training.
 * Single-batch inference to keep the focus on runtime execution rather than request scheduling.
-* Sub-1B model size to match the available hardware and allow extensive experimentation.
+* Sub-2B model size to match the available hardware and allow extensive experimentation.
 
 ```
 CUDA Events

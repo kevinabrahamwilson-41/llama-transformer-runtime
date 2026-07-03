@@ -36,3 +36,17 @@ Phase 5 – Integration with LLaMA Model Weights
 Phase 6 – Single-Batch Inference Implementation
 Phase 7 – Comprehensive Benchmarking and Performance Evaluation
 ```
+
+```
+Execution time
+Throughput
+Occupancy
+Register usage
+Shared memory usage
+Global memory throughput
+Warp execution efficiency
+SM utilization
+L2 cache hit rate
+Achieved FLOPS
+Arithmetic intensity
+```

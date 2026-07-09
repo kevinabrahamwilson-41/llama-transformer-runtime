@@ -1,5 +1,5 @@
 # LaBelle
-## LLaMA Transformer Runtime: Custom CUDA Kernels, Profiling, and Performance Optimization
+## Llama Transformer Runtime: Custom CUDA Kernels, GPU Optimization Techniques and Performance Analysis
 
 ### **Strictly limited to sub-2B parameter models**
 

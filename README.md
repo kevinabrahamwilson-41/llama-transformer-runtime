@@ -50,3 +50,33 @@ L2 cache hit rate
 Achieved FLOPS
 Arithmetic intensity
 ```
+
+
+sudo /usr/local/cuda/bin/ncu ./rmsnorm
+sudo /usr/local/cuda/bin/ncu ./any compiled kernel binaries
+
+if this happens 
+Memory analysis
+
+Your output says:
+
+DRAM Throughput 84.96%
+Memory Throughput 84.96%
+Compute Throughput 35.89%
+
+This screams:
+
+memory-bound kernel
+
+So collect memory:
+
+sudo /usr/local/cuda/bin/ncu \
+--section MemoryWorkloadAnalysis \
+./rmsnorm
+
+You will see:
+
+global load efficiency
+global store efficiency
+cache hit rates
+bandwidth utilization

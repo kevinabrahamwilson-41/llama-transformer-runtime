@@ -28,13 +28,6 @@ weights/
 *.obj
 *.out
 a.out
-
-# CUDA executables
-src/kernels/**/rmsnorm
-src/kernels/**/gemm
-src/kernels/**/softmax
-src/kernels/**/attention
-
 # ==========================================
 # Logs
 # ==========================================

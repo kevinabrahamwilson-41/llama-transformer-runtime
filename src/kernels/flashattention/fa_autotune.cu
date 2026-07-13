@@ -1,12 +1,3 @@
-// ============================================================================
-// Flash Attention autotuner — engine implementation.
-//
-// Generic, kernel-agnostic. Given a list of FaCandidate function pointers and a
-// problem shape, it benchmarks the valid ones once, caches the winner per shape
-// (in memory + an optional FA_WISDOM file), and returns the chosen index. It
-// mirrors triton.autotune: a config list, do_bench, argmin, and a per-shape
-// cache — with a wisdom file (FFTW-style) so a shape is tuned once across runs.
-// ============================================================================
 #include "fa_autotune.h"
 #include <cstdio>
 #include <cstdlib>
@@ -17,13 +8,10 @@
 #include <mutex>
 #include <string>
 #include <tuple>
-
 namespace transformer {
 namespace {
-
 using FaKey = std::tuple<int, int, int, int, int, int, int>; // B,H,Hkv,S,D,causal,dtype
 using FaGeom = std::tuple<int, int, int>;                     // bm,bn,nw
-
 std::map<FaKey, FaGeom> &fa_cache() {
   static std::map<FaKey, FaGeom> c;
   return c;
@@ -41,10 +29,6 @@ int fa_smem_optin() {
   }
   return v;
 }
-
-// A candidate is valid for this shape if (1) its smem fits and (2) it satisfies
-// the kernel's smem_p-aliases-smem_k constraint P=BM*(BN+8) <= K=BN*(D+8), which
-// if violated silently corrupts output. Pruned before benchmarking.
 bool fa_valid(const FaCandidate &c, int d_head) {
   if ((long long)c.smem > fa_smem_optin())
     return false;
@@ -53,11 +37,6 @@ bool fa_valid(const FaCandidate &c, int d_head) {
     return false;
   return true;
 }
-
-// ---- Wisdom file (FFTW-style): persist the cache across runs. --------------
-// Path from FA_WISDOM; unset → in-memory only. A device-tag header line, then
-// one line per tuned shape: "B H Hkv S D causal dtype BM BN NW". Tagged with
-// device+arch so wisdom from a different GPU is ignored, not mis-applied.
 const char *fa_wisdom_path() {
   static const char *p = std::getenv("FA_WISDOM");
   return (p && p[0]) ? p : nullptr;
@@ -77,20 +56,14 @@ const std::string &fa_device_tag() {
   }();
   return tag;
 }
-// 0 = uninitialized; 1 = append to an existing matching file (or no path);
-// 2 = file missing/mismatched → the first save rewrites it fresh with our header.
 int &fa_wisdom_mode() {
   static int m = 0;
   return m;
 }
-// Cached: read once. (Called on every launch; getenv is O(environment) and
-// would add ~20us/launch — enough to wreck a 30us kernel in a tight loop.)
 bool fa_verbose() {
   static bool v = std::getenv("FA_AUTOTUNE_VERBOSE") != nullptr;
   return v;
 }
-
-// Load the wisdom file into the cache once (caller holds fa_cache_mu()).
 void fa_wisdom_load_once() {
   if (fa_wisdom_mode() != 0)
     return;
@@ -118,7 +91,6 @@ void fa_wisdom_load_once() {
              path);
   }
 }
-// Append one tuned result (caller holds fa_cache_mu()).
 void fa_wisdom_save(const FaKey &k, const FaGeom &g) {
   const char *path = fa_wisdom_path();
   if (!path)
@@ -138,10 +110,6 @@ void fa_wisdom_save(const FaKey &k, const FaGeom &g) {
         << std::get<5>(k) << " " << std::get<6>(k) << " " << std::get<0>(g)
         << " " << std::get<1>(g) << " " << std::get<2>(g) << "\n";
 }
-
-// do_bench: time `launch` on throwaway buffers of the real problem shape.
-// Returns mean ms (cudaEvent) — the measurement our A/B harness uses. Warms up
-// 25 iters first so a cold GPU doesn't bias the early configs slow.
 float fa_do_bench(void (*launch)(const FlashAttentionParams &),
                   const FlashAttentionParams &base) {
   const int B = base.batch_size, Hq = base.num_heads, S = base.seq_len,
@@ -183,8 +151,6 @@ float fa_do_bench(void (*launch)(const FlashAttentionParams &),
   cudaFree(Q); cudaFree(K); cudaFree(V); cudaFree(O); cudaFree(L);
   return ms / 30.0f;
 }
-
-// Resolve a geometry to an index in `cands` (-1 if it isn't a current candidate).
 int fa_geom_index(const FaCandidate *cands, int n, const FaGeom &g) {
   for (int i = 0; i < n; i++)
     if (cands[i].bm == std::get<0>(g) && cands[i].bn == std::get<1>(g) &&
@@ -194,7 +160,6 @@ int fa_geom_index(const FaCandidate *cands, int n, const FaGeom &g) {
 }
 
 } // anonymous namespace
-
 int fa_autotune_pick(const FaCandidate *cands, int n,
                      const FlashAttentionParams &p) {
   const int Hkv = (p.num_kv_heads > 0) ? p.num_kv_heads : p.num_heads;
@@ -241,5 +206,4 @@ int fa_autotune_pick(const FaCandidate *cands, int n,
   int idx = fa_geom_index(cands, n, geom);
   return idx >= 0 ? idx : 0;
 }
-
 } // namespace transformer

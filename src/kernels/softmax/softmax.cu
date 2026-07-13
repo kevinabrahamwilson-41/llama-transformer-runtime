@@ -1,19 +1,10 @@
-#include <cuda_runtime.h>
-#include <cuda_bf16.h>
+#include "softmax.hpp"
 #include <cfloat>
-#include <math_constants.h>
 #include <cstdio>
-
-constexpr int SEQ_LEN           = 512;
-constexpr int HEADS             = 32;
-constexpr int KV_HEADS          = 8;
-constexpr int HEAD_DIM          = 64;
-constexpr int BLOCK_SIZE        = 256;
-constexpr int WARPS             = 8;
-constexpr int VALUES_PER_THREAD = 2;
-constexpr int WARP_SIZE         = 32;
-constexpr unsigned FULL_MASK = 0xffffffffu;
-constexpr int ELEMENTS_PER_THREAD = SEQ_LEN / BLOCK_SIZE;
+#include <cmath>
+#include <iostream>
+#include <random>
+#include <vector>
 
 __forceinline__ __device__ float warp_reduce_max(float val) {
     #pragma unroll
@@ -31,14 +22,13 @@ __forceinline__ __device__ float warp_reduce_sum(float val) {
     return val;
 }
 
-__global__ __launch_bounds__(256) void softmax_kernel(
+__global__ __launch_bounds__(256,2) void softmax_kernel(
     const __nv_bfloat16* __restrict__ input,
     __nv_bfloat16* __restrict__ output,
     int rows
 ) {
     int row_idx = blockIdx.x;
     if (row_idx >= rows) return;
-    
     __shared__ float s_row[SEQ_LEN];
     __shared__ float s_warp_results[WARPS];
     
@@ -46,10 +36,8 @@ __global__ __launch_bounds__(256) void softmax_kernel(
     const int lane_id = tid % WARP_SIZE;
     const int warp_id = tid / WARP_SIZE;
     const int base_offset = row_idx * SEQ_LEN;
-    
     // Vectorized loads with bfloat162
     const __nv_bfloat162* input_vec = reinterpret_cast<const __nv_bfloat162*>(input);
-    
     #pragma unroll
     for (int i = 0; i < ELEMENTS_PER_THREAD / 2; i++) {
         int idx = tid + i * BLOCK_SIZE;
@@ -165,4 +153,91 @@ cudaError_t launch_softmax_safe(const __nv_bfloat16* input, __nv_bfloat16* outpu
     }
     
     return cudaSuccess;
+}
+int main() {
+    constexpr int BATCH = 1;
+    constexpr int ROWS = BATCH * HEADS * SEQ_LEN;
+    constexpr size_t NUM_ELEMENTS = static_cast<size_t>(ROWS) * SEQ_LEN;
+    std::cout << "Llama 3.2 1B Softmax Test\n";
+    std::cout << "Rows           : " << ROWS << '\n';
+    std::cout << "Sequence Length: " << SEQ_LEN << '\n';
+    std::cout << "Total Elements : " << NUM_ELEMENTS << "\n\n";
+    // ---------------- Host Memory ----------------
+    std::vector<__nv_bfloat16> h_input(NUM_ELEMENTS);
+    std::vector<__nv_bfloat16> h_output(NUM_ELEMENTS);
+    // Random logits
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> dist(-5.0f, 5.0f);
+    for (size_t i = 0; i < NUM_ELEMENTS; i++) {
+        h_input[i] = __float2bfloat16(dist(rng));
+    }
+    // ---------------- Device Memory ----------------
+    __nv_bfloat16 *d_input = nullptr;
+    __nv_bfloat16 *d_output = nullptr;
+    if (cudaMalloc(&d_input, NUM_ELEMENTS * sizeof(__nv_bfloat16)) != cudaSuccess) {
+        std::cerr << "cudaMalloc failed\n";
+        return EXIT_FAILURE;
+    }
+    if (cudaMalloc(&d_output, NUM_ELEMENTS * sizeof(__nv_bfloat16)) != cudaSuccess) {
+        std::cerr << "cudaMalloc failed\n";
+        cudaFree(d_input);
+        return EXIT_FAILURE;
+    }
+    cudaMemcpy(
+        d_input,
+        h_input.data(),
+        NUM_ELEMENTS * sizeof(__nv_bfloat16),
+        cudaMemcpyHostToDevice
+    );
+    // ---------------- Launch Kernel ----------------
+    cudaError_t err = launch_softmax_safe(d_input, d_output, ROWS);
+    if (err != cudaSuccess) {
+        std::cerr << "Kernel failed: "
+                  << cudaGetErrorString(err)
+                  << std::endl;
+
+        cudaFree(d_input);
+        cudaFree(d_output);
+        return EXIT_FAILURE;
+    }
+    // ---------------- Copy Back ----------------
+    cudaMemcpy(
+        h_output.data(),
+        d_output,
+        NUM_ELEMENTS * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+    // ---------------- Verify ----------------
+    bool pass = true;
+    for (int row = 0; row < ROWS; row++) {
+        float sum = 0.0f;
+        for (int j = 0; j < SEQ_LEN; j++) {
+            sum += __bfloat162float(h_output[row * SEQ_LEN + j]);
+        }
+        if (std::fabs(sum - 1.0f) > 1e-2f) {
+            std::cout << "Verification failed at row "
+                      << row
+                      << " (sum = "
+                      << sum
+                      << ")\n";
+            pass = false;
+            break;
+        }
+    }
+    if (pass)
+        std::cout << "Verification : PASS\n";
+    else
+        std::cout << "Verification : FAIL\n";
+    // Print first 10 probabilities of first row
+    std::cout << "\nFirst 10 outputs of row 0:\n";
+    for (int i = 0; i < 10; i++) {
+        std::cout
+            << __bfloat162float(h_output[i])
+            << " ";
+    }
+    std::cout << "\n";
+    // ---------------- Cleanup ----------------
+    cudaFree(d_input);
+    cudaFree(d_output);
+    return 0;
 }

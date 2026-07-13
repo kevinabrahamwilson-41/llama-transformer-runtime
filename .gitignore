@@ -12,7 +12,9 @@ __pycache__/
 # ==========================================
 # Model Weights
 # ==========================================
-
+ src/kernels/gemm/wmma_2048x512
+ src/kernels/gemm/wmma_2048x8192
+ src/kernels/gemm/wmma_8192x2048
 weights/
 *.safetensors
 *.bin

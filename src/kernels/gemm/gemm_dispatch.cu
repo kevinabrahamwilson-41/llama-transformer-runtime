@@ -8,6 +8,7 @@
 #include "gemm_2048x512.hpp"
 #include "gemm_2048x8192.hpp"
 #include "gemm_8192x2048.hpp"
+#include "gemm_2048x128256.hpp"
 
 void gemm_dispatch(
     const __nv_bfloat16* A,
@@ -53,6 +54,15 @@ void gemm_dispatch(
         return;
     }
 
+    // ===========================
+    // LM Head / Output Projection
+    // ===========================
+    if (M == 2048 && N == 2048 && K == 128256)
+    {
+        launch_gemm_2048x128256(A, B, C, M, N, K);
+        return;
+    }
+    
     std::ostringstream oss;
     oss << "Unsupported GEMM shape: "
         << "M=" << M

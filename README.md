@@ -80,3 +80,32 @@ global load efficiency
 global store efficiency
 cache hit rates
 bandwidth utilization
+
+
+```
+model specs
+
+Parameters:
+1.23B
+
+Layers:
+16
+
+Hidden dimension:
+2048
+
+Attention heads:
+32
+
+KV heads:
+8  (GQA)
+
+Head dimension:
+64
+
+Context:
+128k
+
+Datatype:
+BF16
+```

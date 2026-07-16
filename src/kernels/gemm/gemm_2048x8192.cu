@@ -79,7 +79,7 @@ void cp_async_wait()
 #endif
 }
 
-// ============== YOUR KERNEL (baseline, no shared mem) ==============
+// ============== BF16 WMMA GEMM WITH SHARED MEMORY + CP.ASYNC ==============
 __global__
 void bf16_tensorcore_gemm_2048x8192(
     const __nv_bfloat16* A,
@@ -93,6 +93,7 @@ void bf16_tensorcore_gemm_2048x8192(
     constexpr int BS_STRIDE = CTA_N + 8;
     __shared__ __nv_bfloat16 As[2][CTA_M][AS_STRIDE];
     __shared__ __nv_bfloat16 Bs[2][WMMA_K][BS_STRIDE];
+    constexpr int C_STRIDE = WMMA_N;
     __shared__ float smem_C[8][WMMA_M][WMMA_N];
     int warp = threadIdx.x / 32;
     int cta_row = blockIdx.y;
@@ -103,8 +104,6 @@ void bf16_tensorcore_gemm_2048x8192(
     int warp_col = warp % 4;
     int tile_row = cta_row_start + warp_row * WMMA_M;
     int tile_col = cta_col_start + warp_col * WMMA_N;
-    if (tile_row >= M || tile_col >= N)
-        return;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc;
     wmma::fill_fragment(acc, 0.0f);
     int stage = 0;
@@ -117,10 +116,21 @@ void bf16_tensorcore_gemm_2048x8192(
         int offset = idx * COPY_ELEMS;
         int r = offset / WMMA_K;
         int c = offset % WMMA_K;
-        cp_async_b16(
-            &As[0][r][c],
-            &A[(cta_row_start+r)*K+c]
-        );
+        if (cta_row_start + r < M)
+        {
+            cp_async_b16(
+                &As[0][r][c],
+                &A[(cta_row_start + r) * K + c]
+            );
+        }
+        else
+        {
+            for (int i = 0; i < COPY_ELEMS; ++i)
+            {
+                As[0][r][c + i] =
+                    __float2bfloat16(0.0f);
+            }
+        }
     }
     for (int idx = threadIdx.x;
         idx < (WMMA_K * CTA_N) / COPY_ELEMS;
@@ -173,11 +183,24 @@ void bf16_tensorcore_gemm_2048x8192(
                 int offset = idx * COPY_ELEMS;
                 int r = offset / WMMA_K;
                 int c = offset % WMMA_K;
-                cp_async_b16(
-                    &As[next_stage][r][c],
-                    &A[(cta_row_start+r)*K +
-                    (k+WMMA_K+c)]
-                );
+                if (cta_row_start + r < M)
+                {
+                    cp_async_b16(
+                        &As[next_stage][r][c],
+                        &A[
+                            (cta_row_start + r) * K +
+                            (k + WMMA_K + c)
+                        ]
+                    );
+                }
+                else
+                {
+                    for (int i = 0; i < COPY_ELEMS; ++i)
+                    {
+                        As[next_stage][r][c + i] =
+                            __float2bfloat16(0.0f);
+                    }
+                }
             }
             // B copy
             for (int idx = threadIdx.x;
@@ -228,8 +251,19 @@ void bf16_tensorcore_gemm_2048x8192(
     {
         int r = i / WMMA_N;
         int c = i % WMMA_N;
-        C[(tile_row + r) * N + tile_col + c] =
-            __float2bfloat16(tile_C[i]);
+        if (
+            tile_row + r < M &&
+            tile_col + c < N
+        )
+        {
+            C[
+                (tile_row + r) * N +
+                tile_col + c
+            ] =
+                __float2bfloat16(
+                    tile_C[r * C_STRIDE + c]
+                );
+        }
     }
 }
 
@@ -241,38 +275,10 @@ void launch_gemm_2048x8192(
     int N,
     int K)
 {
-    dim3 block(256);        // 4 warps
+    dim3 block(256);        // 8 warps
     dim3 grid(
         (N + CTA_N - 1) / CTA_N,
         (M + CTA_M - 1) / CTA_M
     );
     bf16_tensorcore_gemm_2048x8192<<<grid, block>>>(A,B,C,M,N,K);
-}
-
-// ============== UTILS ==============
-__nv_bfloat16 float2bf16(float x) {
-    return __float2bfloat16(x);
-}
-
-float bf162float(__nv_bfloat16 x) {
-    return __bfloat162float(x);
-}
-
-void init_matrix(__nv_bfloat16* mat, int rows, int cols, float scale = 0.1f) {
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<float> dis(-scale, scale);
-    for(int i = 0; i < rows * cols; i++) {
-        mat[i] = float2bf16(dis(gen));
-    }
-}
-
-void verify_results(float* gpu, float* ref, int size, float tol = 1e-3f) {
-    int errors = 0;
-    float max_err = 0.0f;
-    for(int i = 0; i < size; i++) {
-        float err = fabsf(gpu[i] - ref[i]);
-        max_err = fmaxf(max_err, err);
-        if(err > tol) errors++;
-    }
-    printf("Verification: max_err=%.6f, errors=%d/%d\n", max_err, errors, size);
 }

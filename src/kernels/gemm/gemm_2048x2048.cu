@@ -31,10 +31,14 @@ __device__ __forceinline__
 void cp_async_wait_1()
 {
 #if __CUDA_ARCH__ >= 800
-    asm volatile("cp.async.wait_group 1;\n");
+    asm volatile(
+        "cp.async.wait_group 1;\n"
+        :
+        :
+        : "memory"
+    );
 #endif
 }
-
 __device__ __forceinline__
 void cp_async_b16(
     __nv_bfloat16* smem,
@@ -67,7 +71,12 @@ __device__ __forceinline__
 void cp_async_commit()
 {
 #if __CUDA_ARCH__ >= 800
-    asm volatile("cp.async.commit_group;\n");
+    asm volatile(
+        "cp.async.commit_group;\n"
+        :
+        :
+        : "memory"
+    );
 #endif
 }
 
@@ -75,16 +84,21 @@ __device__ __forceinline__
 void cp_async_wait()
 {
 #if __CUDA_ARCH__ >= 800
-    asm volatile("cp.async.wait_group 0;\n");
+    asm volatile(
+        "cp.async.wait_group 0;\n"
+        :
+        :
+        : "memory"
+    );
 #endif
 }
 
-// ============== YOUR KERNEL (baseline, no shared mem) ==============
+// ============== BF16 WMMA GEMM WITH SHARED MEMORY + CP.ASYNC ==============
 __global__
 void bf16_tensorcore_gemm_2048x2048(
     const __nv_bfloat16* A,
     const __nv_bfloat16* B,
-    float* C,
+    __nv_bfloat16* C,
     int M,
     int N,
     int K
@@ -93,6 +107,8 @@ void bf16_tensorcore_gemm_2048x2048(
     constexpr int BS_STRIDE = CTA_N + 8;
     __shared__ __nv_bfloat16 As[2][CTA_M][AS_STRIDE];
     __shared__ __nv_bfloat16 Bs[2][WMMA_K][BS_STRIDE];
+    constexpr int C_STRIDE = WMMA_N;
+    __shared__ float smem_C[8][WMMA_M][WMMA_N];
     int warp = threadIdx.x / 32;
     int cta_row = blockIdx.y;
     int cta_col = blockIdx.x;
@@ -102,8 +118,6 @@ void bf16_tensorcore_gemm_2048x2048(
     int warp_col = warp % 4;
     int tile_row = cta_row_start + warp_row * WMMA_M;
     int tile_col = cta_col_start + warp_col * WMMA_N;
-    if (tile_row >= M || tile_col >= N)
-        return;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc;
     wmma::fill_fragment(acc, 0.0f);
     int stage = 0;
@@ -116,10 +130,21 @@ void bf16_tensorcore_gemm_2048x2048(
         int offset = idx * COPY_ELEMS;
         int r = offset / WMMA_K;
         int c = offset % WMMA_K;
-        cp_async_b16(
-            &As[0][r][c],
-            &A[(cta_row_start+r)*K+c]
-        );
+        if (cta_row_start + r < M)
+        {
+            cp_async_b16(
+                &As[0][r][c],
+                &A[(cta_row_start + r) * K + c]
+            );
+        }
+        else
+        {
+            for (int i = 0; i < COPY_ELEMS; ++i)
+            {
+                As[0][r][c + i] =
+                    __float2bfloat16(0.0f);
+            }
+        }
     }
     for (int idx = threadIdx.x;
         idx < (WMMA_K * CTA_N) / COPY_ELEMS;
@@ -172,11 +197,24 @@ void bf16_tensorcore_gemm_2048x2048(
                 int offset = idx * COPY_ELEMS;
                 int r = offset / WMMA_K;
                 int c = offset % WMMA_K;
-                cp_async_b16(
-                    &As[next_stage][r][c],
-                    &A[(cta_row_start+r)*K +
-                    (k+WMMA_K+c)]
-                );
+                if (cta_row_start + r < M)
+                {
+                    cp_async_b16(
+                        &As[next_stage][r][c],
+                        &A[
+                            (cta_row_start + r) * K +
+                            (k + WMMA_K + c)
+                        ]
+                    );
+                }
+                else
+                {
+                    for (int i = 0; i < COPY_ELEMS; ++i)
+                    {
+                        As[next_stage][r][c + i] =
+                            __float2bfloat16(0.0f);
+                    }
+                }
             }
             // B copy
             for (int idx = threadIdx.x;
@@ -214,137 +252,66 @@ void bf16_tensorcore_gemm_2048x2048(
             stage ^= 1;
         }
     }
-    float* tile_C = C + tile_row * N + tile_col;
-    wmma::store_matrix_sync(tile_C, acc, N, wmma::mem_row_major);
+    float* tile_C = &smem_C[warp][0][0];
+    wmma::store_matrix_sync(
+        tile_C,
+        acc,
+        WMMA_N,
+        wmma::mem_row_major
+    );
+    __syncwarp();
+    int lane = threadIdx.x % 32;
+    for (int i = lane; i < WMMA_M * WMMA_N; i += 32)
+    {
+        int r = i / WMMA_N;
+        int c = i % WMMA_N;
+        if (
+            tile_row + r < M &&
+            tile_col + c < N
+        )
+        {
+            C[
+                (tile_row + r) * N +
+                tile_col + c
+            ] =
+                __float2bfloat16(
+                    tile_C[r * C_STRIDE + c]
+                );
+        }
+    }
 }
 
-void launch_gemm(
-    __nv_bfloat16* A,
-    __nv_bfloat16* B,
-    float* C,
+void launch_gemm_2048x2048(
+    const __nv_bfloat16* A,
+    const __nv_bfloat16* B,
+    __nv_bfloat16* C,
     int M,
     int N,
     int K)
 {
-    dim3 block(256);        // 4 warps
+    dim3 block(256);
+
     dim3 grid(
         (N + CTA_N - 1) / CTA_N,
         (M + CTA_M - 1) / CTA_M
     );
-    bf16_tensorcore_gemm_2048x2048<<<grid, block>>>(A,B,C,M,N,K);
-}
 
-// ============== UTILS ==============
-__nv_bfloat16 float2bf16(float x) {
-    return __float2bfloat16(x);
-}
-
-float bf162float(__nv_bfloat16 x) {
-    return __bfloat162float(x);
-}
-
-void init_matrix(__nv_bfloat16* mat, int rows, int cols, float scale = 0.1f) {
-    std::mt19937 gen(42);
-    std::uniform_real_distribution<float> dis(-scale, scale);
-    for(int i = 0; i < rows * cols; i++) {
-        mat[i] = float2bf16(dis(gen));
-    }
-}
-
-void verify_results(float* gpu, float* ref, int size, float tol = 1e-3f) {
-    int errors = 0;
-    float max_err = 0.0f;
-    for(int i = 0; i < size; i++) {
-        float err = fabsf(gpu[i] - ref[i]);
-        max_err = fmaxf(max_err, err);
-        if(err > tol) errors++;
-    }
-    printf("Verification: max_err=%.6f, errors=%d/%d\n", max_err, errors, size);
-}
-
-// ============== MAIN ==============
-int main() {
-    const int M = 2048;  // Llama 3.2 1B hidden_dim
-    const int N = 2048;
-    const int K = 2048;
-    printf("=== Llama 3.2 1B GEMM Benchmark (BF16, 2048x2048x2048) ===\n");
-    printf("A: %d x %d, B: %d x %d, C: %d x %d\n", M, K, K, N, M, N);
-    // Allocate host buffers (BF16 for A,B; float for C)
-    size_t size_A = M * K * sizeof(__nv_bfloat16);
-    size_t size_B = K * N * sizeof(__nv_bfloat16);
-    size_t size_C = M * N * sizeof(float);
-    __nv_bfloat16* h_A = (__nv_bfloat16*)malloc(size_A);
-    __nv_bfloat16* h_B = (__nv_bfloat16*)malloc(size_B);
-    float* h_C_gpu = (float*)malloc(size_C);
-    float* h_C_ref = (float*)malloc(size_C);
-    init_matrix(h_A, M, K);
-    init_matrix(h_B, K, N);
-    // Allocate device memory
-    __nv_bfloat16 *d_A, *d_B;
-    float *d_C;
-    cudaMalloc(&d_A, size_A);
-    cudaMalloc(&d_B, size_B);
-    cudaMalloc(&d_C, size_C);
-    cudaMemcpy(d_A, h_A, size_A, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, size_B, cudaMemcpyHostToDevice);
-    // ============== cuBLAS reference ==============
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-    const float alpha = 1.0f, beta = 0.0f;
-    cublasGemmEx(handle,
-        CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,
-        &alpha,
-        d_B, CUDA_R_16BF, N,
-        d_A, CUDA_R_16BF, K,
-        &beta,
-        d_C, CUDA_R_32F, N,
-        CUBLAS_COMPUTE_32F,
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    bf16_tensorcore_gemm_2048x2048<<<grid, block>>>(
+        A,
+        B,
+        C,
+        M,
+        N,
+        K
     );
-    cudaMemcpy(h_C_ref, d_C, size_C, cudaMemcpyDeviceToHost);
-    cudaDeviceSynchronize();
-    // ============== YOUR KERNEL (baseline) ==============
-    auto start = std::chrono::high_resolution_clock::now();
-    launch_gemm(d_A, d_B, d_C, M, N, K);
-    cudaDeviceSynchronize();
-    auto end = std::chrono::high_resolution_clock::now();
-    cudaMemcpy(h_C_gpu, d_C, size_C, cudaMemcpyDeviceToHost);
-    double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-    double gflops = (2.0 * M * N * K) / (elapsed_ms * 1e6);
-    double gb_s = ((M * K + K * N + M * N) * sizeof(__nv_bfloat16)) / (elapsed_ms * 1e6);
-    printf("\n[Your WMMA Kernel] Time: %.3f ms, %.2f TFLOPS, %.2f GB/s\n",
-           elapsed_ms, gflops / 1000.0, gb_s);
-    verify_results(h_C_gpu, h_C_ref, M * N, 1e-2f);
-    // ============== cuBLAS timing ==============
-    cudaEvent_t start_evt, stop_evt;
-    cudaEventCreate(&start_evt);
-    cudaEventCreate(&stop_evt);
-    int warmup = 10, runs = 100;
-    for(int i = 0; i < warmup; i++) {
-        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha,
-            d_B, CUDA_R_16BF, N, d_A, CUDA_R_16BF, K, &beta,
-            d_C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+
+    cudaError_t err = cudaGetLastError();
+
+    if (err != cudaSuccess)
+    {
+        printf(
+            "GEMM ERROR: %s\n",
+            cudaGetErrorString(err)
+        );
     }
-    cudaEventRecord(start_evt);
-    for(int i = 0; i < runs; i++) {
-        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha,
-            d_B, CUDA_R_16BF, N, d_A, CUDA_R_16BF, K, &beta,
-            d_C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
-    }
-    cudaEventRecord(stop_evt);
-    cudaEventSynchronize(stop_evt);
-    float elapsed_cublas;
-    cudaEventElapsedTime(&elapsed_cublas, start_evt, stop_evt);
-    elapsed_cublas /= runs;
-    double cublas_gflops = (2.0 * M * N * K) / (elapsed_cublas * 1e6);
-    printf("\n[cuBLAS] Time: %.3f ms, %.2f TFLOPS\n", elapsed_cublas, cublas_gflops / 1000.0);
-    printf("\nSpeedup vs cuBLAS: %.2fx\n", elapsed_cublas / elapsed_ms);
-    // Cleanup
-    free(h_A); free(h_B); free(h_C_gpu); free(h_C_ref);
-    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
-    cublasDestroy(handle);
-    cudaEventDestroy(start_evt);
-    cudaEventDestroy(stop_evt);
-    return 0;
 }

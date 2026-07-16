@@ -8,8 +8,6 @@
 // ======================================================
 // Llama 3.2 1B RoPE Constants
 // ======================================================
-
-constexpr int ROPE_SEQ_LEN   = 512;
 constexpr int ROPE_HEADS     = 32;
 constexpr int ROPE_KV_HEADS  = 8;
 constexpr int ROPE_HEAD_DIM  = 64;
@@ -52,13 +50,20 @@ do {                                                          \
 // [seq, head_dim/2]
 //
 // ======================================================
+void launch_rope_qkv(
+    const __nv_bfloat16* q_in,
+    __nv_bfloat16* q_out,
 
-void launch_rope_qk(
-    __nv_bfloat16* q,
-    __nv_bfloat16* k,
+    const __nv_bfloat16* k_in,
+    __nv_bfloat16* k_out,
+
+    const __nv_bfloat16* v_in,
+    __nv_bfloat16* v_out,
 
     float* cos_table,
-    float* sin_table
+    float* sin_table,
+
+    int tokens
 );
 
 

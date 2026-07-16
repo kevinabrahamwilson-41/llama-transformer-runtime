@@ -6,7 +6,7 @@
 void launch_gemm_2048x512(
     const __nv_bfloat16* A,
     const __nv_bfloat16* B,
-    float* C,
+    __nv_bfloat16* C,
     int M,
     int N,
     int K

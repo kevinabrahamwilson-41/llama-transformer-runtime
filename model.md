@@ -181,3 +181,8 @@ FeedForward
     └── elementwise/mul
 
 ```
+
+```
+Your LOQ RTX 4060 just chewed through ~137 billion attention FLOPs in 6.6 milliseconds.
+
+```s

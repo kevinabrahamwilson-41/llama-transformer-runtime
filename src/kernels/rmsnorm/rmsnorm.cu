@@ -128,13 +128,20 @@ void rmsnorm_launch(
         rows,
         eps
     );
-    cudaError_t err = cudaDeviceSynchronize();
+    cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA kernel launch error: %s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 }
-
+template void rmsnorm_launch<2048>(
+    const __nv_bfloat16*,
+    const __nv_bfloat16*,
+    __nv_bfloat16*,
+    int,
+    float,
+    int
+);
 // Simple test in main()
 int main() {
     constexpr int HIDDEN = 2048;
@@ -169,7 +176,13 @@ int main() {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    rmsnorm_launch<HIDDEN>(d_in, d_w, d_out, ROWS, eps);
+    rmsnorm_launch<HIDDEN>(
+        d_in,
+        d_w,
+        d_out,
+        ROWS,
+        eps
+    );
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float ms = 0.0f;

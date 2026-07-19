@@ -2,6 +2,10 @@
 #include "../kernels/residual_add/residual_add.hpp"
 #include <iostream>
 #include <cstdint>
+#include <vector>
+#include <cstdio>
+#include <cuda_runtime.h>
+#include <cuda_bf16.h>
 namespace runtime
 {
 
@@ -45,6 +49,43 @@ static void debug_check_tensor(
         max_abs,
         max_idx
     );
+}
+
+static void dump_tensor(
+    const char* path,
+    const Tensor& tensor,
+    int tokens
+)
+{
+    const int elements = tokens * 2048;
+
+    std::vector<__nv_bfloat16> host(elements);
+
+    cudaMemcpy(
+        host.data(),
+        tensor.data_bf16(),
+        elements * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+
+    FILE* file = fopen(path, "w");
+
+    if (!file)
+    {
+        printf("Failed to open dump file: %s\n", path);
+        return;
+    }
+
+    for (int i = 0; i < elements; ++i)
+    {
+        fprintf(
+            file,
+            "%.9g\n",
+            __bfloat162float(host[i])
+        );
+    }
+
+    fclose(file);
 }
 
 static float read_device_bf16(
@@ -105,6 +146,13 @@ void TransformerBlock::forward(
         input,
         attention_output
     );
+    cudaDeviceSynchronize();
+
+    dump_tensor(
+        "/tmp/cuda_attention_output.txt",
+        attention_output,
+        tokens
+    );
     debug_check_tensor(
         "ATTENTION",
         attention_output,
@@ -139,7 +187,11 @@ void TransformerBlock::forward(
     );
 
     cudaDeviceSynchronize();
-
+    dump_tensor(
+        "/tmp/cuda_residual.txt",
+        residual,
+        tokens
+    );
     debug_check_tensor(
         "RESIDUAL",
         residual,
@@ -174,6 +226,13 @@ void TransformerBlock::forward(
         ffn_output
     );
 
+    cudaDeviceSynchronize();
+
+    dump_tensor(
+        "/tmp/cuda_ffn_output.txt",
+        ffn_output,
+        tokens
+    );
     debug_check_tensor(
         "FFN",
         ffn_output,
@@ -202,13 +261,20 @@ void TransformerBlock::forward(
         output.data_bf16(),
         static_cast<int64_t>(tokens) * 2048
     );
+    cudaDeviceSynchronize();
 
-    debug_check_tensor(
-        "RESIDUAL",
-        residual,
+    dump_tensor(
+        "/tmp/cuda_block0_output.txt",
+        output,
         tokens
     );
-    cudaDeviceSynchronize();
+
+    debug_check_tensor(
+        "OUTPUT",
+        output,
+        tokens
+    );
+    //cudaDeviceSynchronize();
     
     std::cout << "OUTPUT[0] = "
             << read_device_bf16(

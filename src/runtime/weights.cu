@@ -316,20 +316,15 @@ void load_weights(
     // --------------------------------------------------------
 
     std::vector<std::uint8_t> host_buffer(
-        DOWN_PROJ_ELEMENTS * BF16_BYTES
+        EMBED_ELEMENTS * BF16_BYTES
     );
-
-
     // --------------------------------------------------------
     // Allocate embedding
     // --------------------------------------------------------
-
     CUDA_CHECK(cudaMalloc(
         &weights.embed_tokens,
         EMBED_ELEMENTS * BF16_BYTES
     ));
-
-
     // --------------------------------------------------------
     // Allocate layers
     // --------------------------------------------------------

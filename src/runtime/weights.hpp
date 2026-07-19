@@ -29,18 +29,18 @@ constexpr int HEAD_DIM = 64;
 
 struct TransformerLayerWeights
 {
-    __nv_bfloat16* input_layernorm;
+    __nv_bfloat16* input_layernorm = nullptr;
 
-    __nv_bfloat16* q_proj;
-    __nv_bfloat16* k_proj;
-    __nv_bfloat16* v_proj;
-    __nv_bfloat16* o_proj;
+    __nv_bfloat16* q_proj = nullptr;
+    __nv_bfloat16* k_proj = nullptr;
+    __nv_bfloat16* v_proj = nullptr;
+    __nv_bfloat16* o_proj = nullptr;
 
-    __nv_bfloat16* post_attention_layernorm;
+    __nv_bfloat16* post_attention_layernorm = nullptr;
 
-    __nv_bfloat16* gate_proj;
-    __nv_bfloat16* up_proj;
-    __nv_bfloat16* down_proj;
+    __nv_bfloat16* gate_proj = nullptr;
+    __nv_bfloat16* up_proj = nullptr;
+    __nv_bfloat16* down_proj = nullptr;
 };
 
 
@@ -51,16 +51,16 @@ struct TransformerLayerWeights
 struct LlamaWeights
 {
     // [VOCAB_SIZE, HIDDEN_SIZE]
-    __nv_bfloat16* embed_tokens;
+    __nv_bfloat16* embed_tokens = nullptr;
 
     TransformerLayerWeights layers[NUM_LAYERS];
 
     // [HIDDEN_SIZE]
-    __nv_bfloat16* final_norm;
+    __nv_bfloat16* final_norm = nullptr;
 
     // Llama uses tied embeddings.
     // lm_head == embed_tokens
-    __nv_bfloat16* lm_head;
+    __nv_bfloat16* lm_head = nullptr;
 };
 
 

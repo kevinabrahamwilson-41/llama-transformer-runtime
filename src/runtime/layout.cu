@@ -21,15 +21,8 @@ void flash_output_layout_kernel(
     int total =
         tokens * HEADS * HEAD_DIM;
 
-    if(idx >= total)
+    if (idx >= total)
         return;
-
-    // FlashAttention layout:
-    //
-    // [HEADS, TOKENS, HEAD_DIM]
-    //
-    // input index:
-    // [head][token][dim]
 
     int dim =
         idx % HEAD_DIM;
@@ -40,24 +33,13 @@ void flash_output_layout_kernel(
     int head =
         idx / (tokens * HEAD_DIM);
 
-    // GEMM layout:
-    //
-    // [TOKENS, HEADS, HEAD_DIM]
-    //
-    // output index:
-    // [token][head][dim]
-
     int output_idx =
-        token * HEADS * HEAD_DIM
-        +
-        head * HEAD_DIM
-        +
-        dim;
+        token * 2048
+        + head * 64
+        + dim;
 
-    output[output_idx] =
-        input[idx];
+    output[output_idx] = input[idx];
 }
-
 void launch_flash_output_layout(
     const __nv_bfloat16* input,
     __nv_bfloat16* output,

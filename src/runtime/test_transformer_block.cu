@@ -2,6 +2,7 @@
 #include "attention.hpp"
 #include "ffn.hpp"
 #include "tensor.hpp"
+#include "weights.hpp"
 
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
@@ -16,249 +17,228 @@
 // ============================================================
 
 #define CUDA_CHECK(call)                                      \
-do {                                                          \
-    cudaError_t err = call;                                   \
-    if (err != cudaSuccess)                                   \
-    {                                                         \
-        printf("CUDA ERROR %s:%d : %s\n",                     \
-               __FILE__,                                      \
-               __LINE__,                                      \
-               cudaGetErrorString(err));                     \
-        exit(EXIT_FAILURE);                                  \
-    }                                                         \
-} while (0)
-
-// ============================================================
-// Helper
-// ============================================================
-
-void allocate_zero(
-    __nv_bfloat16** ptr,
-    size_t elements
+    do                                                      \
+    {                                                       \
+        cudaError_t err = (call);                            \
+                                                            \
+        if (err != cudaSuccess)                             \
+        {                                                   \
+            printf(                                         \
+                "CUDA ERROR %s:%d : %s\n",               \
+                __FILE__,                                   \
+                __LINE__,                                   \
+                cudaGetErrorString(err)                     \
+            );                                              \
+                                                            \
+            exit(EXIT_FAILURE);                             \
+        }                                                   \
+    } while (0)
+static void dump_tensor(
+    const char* path,
+    const __nv_bfloat16* tensor,
+    int elements
 )
 {
-    CUDA_CHECK(
-        cudaMalloc(
-            ptr,
-            elements * sizeof(__nv_bfloat16)
-        )
-    );
+    FILE* file = std::fopen(path, "w");
 
-    CUDA_CHECK(
-        cudaMemset(
-            *ptr,
-            0,
-            elements * sizeof(__nv_bfloat16)
-        )
-    );
-}
-
-void allocate_ones(
-    __nv_bfloat16** ptr,
-    size_t elements
-)
-{
-    std::vector<__nv_bfloat16> host(
-        elements,
-        __float2bfloat16(1.0f)
-    );
-
-    CUDA_CHECK(
-        cudaMalloc(
-            ptr,
-            elements * sizeof(__nv_bfloat16)
-        )
-    );
-
-    CUDA_CHECK(
-        cudaMemcpy(
-            *ptr,
-            host.data(),
-            elements * sizeof(__nv_bfloat16),
-            cudaMemcpyHostToDevice
-        )
-    );
-}
-void allocate_matrix(
-    __nv_bfloat16** ptr,
-    size_t elements,
-    float scale
-)
-{
-    std::vector<__nv_bfloat16> host(
-        elements
-    );
-
-    for (size_t i = 0; i < elements; ++i)
+    if (!file)
     {
-        float value =
-            ((static_cast<int>(i % 17) - 8) * scale);
+        std::printf(
+            "Failed to open dump file: %s\n",
+            path
+        );
 
-        host[i] =
-            __float2bfloat16(value);
+        std::exit(EXIT_FAILURE);
     }
 
-    CUDA_CHECK(
-        cudaMalloc(
-            ptr,
-            elements * sizeof(__nv_bfloat16)
-        )
-    );
+    for (int i = 0; i < elements; ++i)
+    {
+        float value =
+            __bfloat162float(
+                tensor[i]
+            );
 
-    CUDA_CHECK(
-        cudaMemcpy(
-            *ptr,
-            host.data(),
-            elements * sizeof(__nv_bfloat16),
-            cudaMemcpyHostToDevice
-        )
+        std::fprintf(
+            file,
+            "%.9g\n",
+            value
+        );
+    }
+
+    std::fclose(file);
+
+    std::printf(
+        "[TEST] Dumped tensor: %s\n",
+        path
     );
 }
-// ============================================================
-// MAIN
-// ============================================================
-
-int main()
-{
+int main(){
     constexpr int TOKENS = 128;
     constexpr int HIDDEN = 2048;
-    float* cos_table;
-    float* sin_table;
-    printf("============================================================\n");
-    printf("              TRANSFORMER BLOCK TEST\n");
-    printf("============================================================\n\n");
-
-    printf("Tokens : %d\n", TOKENS);
-    printf("Hidden : %d\n\n", HIDDEN);
-
-    // ========================================================
-    // 1. Allocate model weights
-    //
-    // ZERO WEIGHTS = STRUCTURAL TEST
-    //
-    // Attention output = 0
-    // FFN output       = 0
-    //
-    // Therefore:
-    //
-    // output = input
-    //
-    // This tests the full block flow and residual connections.
-    // ========================================================
-
-    __nv_bfloat16* attention_norm;
-    __nv_bfloat16* q_proj;
-    __nv_bfloat16* k_proj;
-    __nv_bfloat16* v_proj;
-    __nv_bfloat16* o_proj;
-
-    __nv_bfloat16* ffn_norm;
-    __nv_bfloat16* gate_proj;
-    __nv_bfloat16* up_proj;
-    __nv_bfloat16* down_proj;
-
-    // Attention RMSNorm
-    allocate_ones(
-        &attention_norm,
-        2048
-    );
-
-    allocate_matrix(
-        &q_proj,
-        2048ULL * 2048,
-        0.001f
-    );
-
-    allocate_matrix(
-        &k_proj,
-        2048ULL * 512,
-        0.001f
-    );
-
-    allocate_matrix(
-        &v_proj,
-        2048ULL * 512,
-        0.001f
-    );
-
-    allocate_matrix(
-        &o_proj,
-        2048ULL * 2048,
-        0.001f
-    );
-
-    // FFN RMSNorm
-    allocate_ones(
-        &ffn_norm,
-        2048
-    );
-
-    allocate_matrix(
-        &gate_proj,
-        2048ULL * 8192,
-        0.0005f
-    );
-
-    allocate_matrix(
-        &up_proj,
-        2048ULL * 8192,
-        0.0005f
-    );
-
-    allocate_matrix(
-        &down_proj,
-        8192ULL * 2048,
-        0.0005f
-    );
-
-    // ========================================================
-    // 2. RoPE tables
-    // ========================================================
-
     constexpr int ROTARY_DIM = 32;
     constexpr int HEAD_DIM = 64;
     constexpr float ROPE_THETA = 500000.0f;
+    constexpr float ROPE_FACTOR = 32.0f;
+    constexpr float LOW_FREQ_FACTOR = 1.0f;
+    constexpr float HIGH_FREQ_FACTOR = 4.0f;
+    constexpr float ORIGINAL_CONTEXT_LENGTH = 8192.0f;
+
+    const char* WEIGHTS_PATH =
+        "/home/dexter-morgan/PROJECTS/FINAL YEAR PROJECT/weights/llama_weights.bin";
+
+
+    printf(
+        "============================================================\n"
+    );
+
+    printf(
+        "        LLAMA 3.2 1B TRANSFORMER BLOCK[0] TEST\n"
+    );
+
+    printf(
+        "============================================================\n\n"
+    );
+
+    printf(
+        "Tokens : %d\n",
+        TOKENS
+    );
+
+    printf(
+        "Hidden : %d\n\n",
+        HIDDEN
+    );
+
+
+    // ========================================================
+    // 1. LOAD REAL MODEL WEIGHTS
+    // ========================================================
+
+    printf(
+        "[TEST] Loading model weights...\n"
+    );
+
+
+    llama::LlamaWeights weights{};
+
+    llama::load_weights(
+        WEIGHTS_PATH,
+        weights
+    );
+
+
+    printf(
+        "[TEST] Real weights loaded.\n\n"
+    );
+
+
+    // ========================================================
+    // 2. CREATE RoPE TABLES
+    // ========================================================
+
+    float* cos_table = nullptr;
+    float* sin_table = nullptr;
+
 
     CUDA_CHECK(
         cudaMalloc(
             &cos_table,
-            TOKENS * ROTARY_DIM * sizeof(float)
+            TOKENS *
+            ROTARY_DIM *
+            sizeof(float)
         )
     );
+
 
     CUDA_CHECK(
         cudaMalloc(
             &sin_table,
-            TOKENS * ROTARY_DIM * sizeof(float)
+            TOKENS *
+            ROTARY_DIM *
+            sizeof(float)
         )
     );
+
 
     std::vector<float> host_cos(
         TOKENS * ROTARY_DIM
     );
 
+
     std::vector<float> host_sin(
         TOKENS * ROTARY_DIM
     );
 
-    for (int pos = 0; pos < TOKENS; ++pos)
-    {
-        for (int pair = 0; pair < ROTARY_DIM; ++pair)
-        {
-            float exponent =
-                static_cast<float>(2 * pair) /
-                static_cast<float>(HEAD_DIM);
 
-            float inv_freq =
-                1.0f /
-                std::pow(
-                    ROPE_THETA,
-                    exponent
+   for (int pair = 0; pair < ROTARY_DIM; ++pair){
+        float exponent =
+            static_cast<float>(2 * pair) /
+            static_cast<float>(HEAD_DIM);
+
+        float inv_freq =
+            1.0f /
+            std::pow(
+                ROPE_THETA,
+                exponent
+            );
+
+        float wavelen =
+            2.0f *
+            static_cast<float>(M_PI) /
+            inv_freq;
+
+        constexpr float FACTOR = 32.0f;
+        constexpr float LOW_FREQ_FACTOR = 1.0f;
+        constexpr float HIGH_FREQ_FACTOR = 4.0f;
+        constexpr float OLD_CONTEXT_LEN = 8192.0f;
+
+        float low_freq_wavelen =
+            OLD_CONTEXT_LEN /
+            LOW_FREQ_FACTOR;
+
+        float high_freq_wavelen =
+            OLD_CONTEXT_LEN /
+            HIGH_FREQ_FACTOR;
+
+        float inv_freq_llama;
+
+        if (wavelen < high_freq_wavelen)
+        {
+            // High frequency: unchanged
+            inv_freq_llama = inv_freq;
+        }
+        else if (wavelen <= low_freq_wavelen)
+        {
+            // Medium frequency: smooth interpolation
+            float smooth_factor =
+                (
+                    OLD_CONTEXT_LEN / wavelen
+                    - LOW_FREQ_FACTOR
+                )
+                /
+                (
+                    HIGH_FREQ_FACTOR
+                    - LOW_FREQ_FACTOR
                 );
 
+            inv_freq_llama =
+                (1.0f - smooth_factor)
+                * (inv_freq / FACTOR)
+                +
+                smooth_factor * inv_freq;
+        }
+        else
+        {
+            // Low frequency: scaled
+            inv_freq_llama =
+                inv_freq / FACTOR;
+        }
+
+        for (int pos = 0; pos < TOKENS; ++pos)
+        {
             float angle =
-                static_cast<float>(pos) *
-                inv_freq;
+                static_cast<float>(pos)
+                * inv_freq_llama;
 
             host_cos[
                 pos * ROTARY_DIM + pair
@@ -270,6 +250,7 @@ int main()
         }
     }
 
+
     CUDA_CHECK(
         cudaMemcpy(
             cos_table,
@@ -278,6 +259,7 @@ int main()
             cudaMemcpyHostToDevice
         )
     );
+
 
     CUDA_CHECK(
         cudaMemcpy(
@@ -288,42 +270,66 @@ int main()
         )
     );
 
+
+    printf(
+        "[TEST] RoPE tables created.\n\n"
+    );
+
+
     // ========================================================
-    // 3. Construct Attention
+    // 3. CONSTRUCT ATTENTION USING LAYER 0 WEIGHTS
     // ========================================================
 
+    printf(
+        "[TEST] Constructing Attention using layer 0...\n"
+    );
+
+
     runtime::Attention attention(
-        attention_norm,
-        q_proj,
-        k_proj,
-        v_proj,
-        o_proj,
+        weights.layers[0].input_layernorm,
+        weights.layers[0].q_proj,
+        weights.layers[0].k_proj,
+        weights.layers[0].v_proj,
+        weights.layers[0].o_proj,
         cos_table,
         sin_table
     );
 
+
     // ========================================================
-    // 4. Construct FeedForward
+    // 4. CONSTRUCT FFN USING LAYER 0 WEIGHTS
     // ========================================================
 
-    runtime::FeedForward ffn(
-        ffn_norm,
-        gate_proj,
-        up_proj,
-        down_proj
+    printf(
+        "[TEST] Constructing FeedForward using layer 0...\n"
     );
 
+
+    runtime::FeedForward ffn(
+        weights.layers[0].post_attention_layernorm,
+        weights.layers[0].gate_proj,
+        weights.layers[0].up_proj,
+        weights.layers[0].down_proj
+    );
+
+
     // ========================================================
-    // 5. Construct TransformerBlock
+    // 5. CONSTRUCT TRANSFORMER BLOCK 0
     // ========================================================
+
+    printf(
+        "[TEST] Constructing TransformerBlock[0]...\n"
+    );
+
 
     runtime::TransformerBlock block(
         attention,
         ffn
     );
 
+
     // ========================================================
-    // 6. Input
+    // 6. CREATE INPUT
     // ========================================================
 
     runtime::Tensor input(
@@ -331,168 +337,230 @@ int main()
         runtime::DataType::BF16
     );
 
+
     runtime::Tensor output(
         {TOKENS, HIDDEN},
         runtime::DataType::BF16
     );
 
+
     // ========================================================
-    // 7. Initialize input
+    // 7. INITIALIZE DETERMINISTIC INPUT
     // ========================================================
 
     std::vector<__nv_bfloat16> host_input(
         TOKENS * HIDDEN
     );
 
+
     for (int i = 0; i < TOKENS * HIDDEN; ++i)
     {
         float value =
-            1.0f + static_cast<float>(i % 17);
+            1.0f +
+            static_cast<float>(i % 17);
+
 
         host_input[i] =
             __float2bfloat16(value);
     }
+
 
     CUDA_CHECK(
         cudaMemcpy(
             input.data_bf16(),
             host_input.data(),
             host_input.size() *
-                sizeof(__nv_bfloat16),
+            sizeof(__nv_bfloat16),
             cudaMemcpyHostToDevice
         )
     );
 
+
+    printf(
+        "[TEST] Input initialized.\n\n"
+    );
+
+
     // ========================================================
-    // 8. Run TransformerBlock
+    // 8. RUN TRANSFORMER BLOCK[0]
     // ========================================================
 
-    printf("\nRunning TransformerBlock...\n");
+    printf(
+        "============================================================\n"
+    );
+
+    printf(
+        "                 RUNNING BLOCK[0]\n"
+    );
+
+    printf(
+        "============================================================\n\n"
+    );
+
 
     block.forward(
         input,
         output
     );
 
+
     CUDA_CHECK(
         cudaDeviceSynchronize()
     );
 
-    printf("Block complete.\n");
+
+    printf(
+        "\n[TEST] TransformerBlock[0] complete.\n\n"
+    );
+
 
     // ========================================================
-    // 9. Copy output back
+    // 9. COPY OUTPUT BACK
     // ========================================================
 
     std::vector<__nv_bfloat16> host_output(
         TOKENS * HIDDEN
     );
 
+
     CUDA_CHECK(
         cudaMemcpy(
             host_output.data(),
             output.data_bf16(),
             host_output.size() *
-                sizeof(__nv_bfloat16),
+            sizeof(__nv_bfloat16),
             cudaMemcpyDeviceToHost
         )
     );
+    dump_tensor(
+        "/tmp/cuda_block0_output.txt",
+        host_output.data(),
+        TOKENS * HIDDEN
+    );
 
     // ========================================================
-    // 10. Validate
-    //
-    // Since attention and FFN weights are zero:
-    //
-    // attention_output = 0
-    // residual         = input
-    // ffn_output       = 0
-    // output           = residual
-    //
-    // Therefore:
-    //
-    // output == input
+    // 10. BASIC OUTPUT VALIDATION
     // ========================================================
 
-    int errors = 0;
+    int nan_count = 0;
+    int inf_count = 0;
+
+    float max_abs = 0.0f;
+
 
     for (int i = 0; i < TOKENS * HIDDEN; ++i)
     {
-        float expected =
-            __bfloat162float(
-                host_input[i]
-            );
-
-        float actual =
+        float value =
             __bfloat162float(
                 host_output[i]
             );
 
-        if (std::fabs(actual - expected) > 0.1f)
-        {
-            if (errors < 10)
-            {
-                printf(
-                    "Mismatch at %d: expected %.4f got %.4f\n",
-                    i,
-                    expected,
-                    actual
-                );
-            }
 
-            errors++;
+        if (std::isnan(value))
+        {
+            nan_count++;
         }
+
+
+        if (std::isinf(value))
+        {
+            inf_count++;
+        }
+
+
+        max_abs =
+            std::max(
+                max_abs,
+                std::fabs(value)
+            );
     }
+
 
     // ========================================================
     // RESULT
     // ========================================================
 
-    printf("\n============================================================\n");
-    printf("                         RESULT\n");
-    printf("============================================================\n");
+    printf(
+        "============================================================\n"
+    );
 
-    if (errors == 0)
+    printf(
+        "                         RESULT\n"
+    );
+
+    printf(
+        "============================================================\n\n"
+    );
+
+
+    printf(
+        "Output max_abs : %.6f\n",
+        max_abs
+    );
+
+
+    printf(
+        "NaN count      : %d\n",
+        nan_count
+    );
+
+
+    printf(
+        "Inf count      : %d\n\n",
+        inf_count
+    );
+
+
+    if (nan_count == 0 && inf_count == 0)
     {
-        printf("\nSUCCESS\n");
-        printf("TransformerBlock flow is structurally CORRECT.\n");
-        printf("\nVerified:\n");
-        printf("  Attention RMSNorm\n");
-        printf("  Q/K/V projections\n");
-        printf("  RoPE\n");
-        printf("  Q/K/V layout conversion\n");
-        printf("  FlashAttention\n");
-        printf("  Attention output projection\n");
-        printf("  Attention residual\n");
-        printf("  FFN RMSNorm\n");
-        printf("  W1\n");
-        printf("  W3\n");
-        printf("  SiLU + Mul\n");
-        printf("  W2\n");
-        printf("  FFN residual\n");
+        printf(
+            "SUCCESS\n"
+        );
+
+        printf(
+            "TransformerBlock[0] executed with REAL Llama 3.2 1B weights.\n"
+        );
+
+        printf(
+            "Attention + FFN + residual flow completed.\n"
+        );
     }
     else
     {
-        printf("\nFAIL\n");
-        printf("Errors: %d\n", errors);
+        printf(
+            "FAIL\n"
+        );
+
+        printf(
+            "Invalid numerical output detected.\n"
+        );
     }
 
+
     // ========================================================
-    // Cleanup
+    // CLEANUP
     // ========================================================
 
-    cudaFree(attention_norm);
-    cudaFree(q_proj);
-    cudaFree(k_proj);
-    cudaFree(v_proj);
-    cudaFree(o_proj);
+    cudaFree(
+        cos_table
+    );
 
-    cudaFree(ffn_norm);
-    cudaFree(gate_proj);
-    cudaFree(up_proj);
-    cudaFree(down_proj);
 
-    cudaFree(cos_table);
-    cudaFree(sin_table);
+    cudaFree(
+        sin_table
+    );
 
-    return errors == 0 ? 0 : 1;
+
+    llama::free_weights(
+        weights
+    );
+
+
+    return (
+        nan_count == 0 &&
+        inf_count == 0
+    )
+        ? 0
+        : 1;
+
 }

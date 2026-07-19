@@ -9,6 +9,9 @@ attention.cu
 ├── FlashAttention
 └── GEMM 2048×2048
 */
+#include <cmath>
+#include <stdexcept>
+#include <string>
 #include "attention.hpp"
 #include "tensor.hpp"
 #include "weights.hpp"
@@ -19,47 +22,21 @@ attention.cu
 #include "../kernels/rope/rope.hpp"
 #include "../kernels/flashattention/flashattention.h"
 #include "layout.hpp"
-namespace runtime
-{
-static void debug_bf16(
-    const char* name,
-    const __nv_bfloat16* ptr,
-    int elements
-)
-{
-    std::vector<__nv_bfloat16> host(
-        elements
-    );
-
-    cudaMemcpy(
-        host.data(),
-        ptr,
-        elements * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-
-    float max_abs = 0.0f;
-    int max_idx = 0;
-
-    for (int i = 0; i < elements; ++i)
-    {
-        float value =
-            __bfloat162float(host[i]);
-
-        if (fabsf(value) > max_abs)
-        {
-            max_abs = fabsf(value);
-            max_idx = i;
-        }
-    }
-
-    printf(
-        "%s max_abs = %.6f at index %d\n",
-        name,
-        max_abs,
-        max_idx
-    );
-}
+#include "debug_dump.hpp"
+namespace runtime{
+#define CUDA_CHECK(call)                                      \
+do                                                            \
+{                                                             \
+    cudaError_t err = (call);                                \
+                                                              \
+    if (err != cudaSuccess)                                   \
+    {                                                         \
+        throw std::runtime_error(                            \
+            std::string("CUDA error: ") +                    \
+            cudaGetErrorString(err)                          \
+        );                                                    \
+    }                                                         \
+} while (0)
 Attention::Attention(
     __nv_bfloat16* input_norm,
     __nv_bfloat16* q_proj,
@@ -109,7 +86,11 @@ void Attention::forward(
         tokens,
         1e-5f
     );
-
+    dump_bf16(
+        "/tmp/cuda_attention_norm.txt",
+        normalized.data_bf16(),
+        tokens * 2048
+    );
     // =========================================================
     // 2. Q projection
     //
@@ -131,20 +112,20 @@ void Attention::forward(
         2048,
         2048
     );
-cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 
-cudaError_t err = cudaGetLastError();
+    cudaError_t err = cudaGetLastError();
 
-if (err != cudaSuccess)
-{
-    printf(
-        "Q GEMM ERROR: %s\n",
-        cudaGetErrorString(err)
-    );
-}
+    if (err != cudaSuccess)
+    {
+        printf(
+            "Q GEMM ERROR: %s\n",
+            cudaGetErrorString(err)
+        );
+    }
 
-    debug_bf16(
-        "Q",
+    dump_bf16(
+        "/tmp/cuda_q.txt",
         q.data_bf16(),
         tokens * 2048
     );
@@ -170,7 +151,11 @@ if (err != cudaSuccess)
         512,
         2048
     );
-
+    dump_bf16(
+        "/tmp/cuda_k.txt",
+        k.data_bf16(),
+        tokens * 512
+    );
     // =========================================================
     // 4. V projection
     //
@@ -194,8 +179,8 @@ if (err != cudaSuccess)
     );
     cudaDeviceSynchronize();
 
-    debug_bf16(
-        "V",
+    dump_bf16(
+        "/tmp/cuda_v.txt",
         v.data_bf16(),
         tokens * 512
     );
@@ -250,20 +235,20 @@ if (err != cudaSuccess)
     );
     cudaDeviceSynchronize();
 
-    debug_bf16(
-        "Q_FLASH",
+    dump_bf16(
+        "/tmp/cuda_q_rope.txt",
         q_flash.data_bf16(),
         32 * tokens * 64
     );
 
-    debug_bf16(
-        "K_FLASH",
+    dump_bf16(
+        "/tmp/cuda_k_rope.txt",
         k_flash.data_bf16(),
         8 * tokens * 64
     );
 
-    debug_bf16(
-        "V_FLASH",
+    dump_bf16(
+        "/tmp/cuda_v_rope.txt",
         v_flash.data_bf16(),
         8 * tokens * 64
     );
@@ -325,16 +310,44 @@ if (err != cudaSuccess)
         flash_params.stream =
             0;
 
+        printf(
+            "FLASH PARAMS: causal=%d seq=%d heads=%d kv_heads=%d scale=%f\n",
+            flash_params.causal,
+            flash_params.seq_len,
+            flash_params.num_heads,
+            flash_params.num_kv_heads,
+            flash_params.scale
+        );
+
         transformer::launch_flash_attention(
             flash_params
         );
-        cudaDeviceSynchronize();
+    // =========================================================
+    // DEBUG: RAW FLASH ATTENTION OUTPUT
+    // =========================================================
+    cudaDeviceSynchronize();
+    __nv_bfloat16 debug[4];
 
-        debug_bf16(
-            "FLASH_OUTPUT",
-            flash_output.data_bf16(),
-            32 * tokens * 64
-        );
+    cudaMemcpy(
+        debug,
+        flash_output.data_bf16(),
+        4 * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+
+    printf(
+        "CUDA FLASH RAW: %f %f %f %f\n",
+        __bfloat162float(debug[0]),
+        __bfloat162float(debug[1]),
+        __bfloat162float(debug[2]),
+        __bfloat162float(debug[3])
+    );
+
+    dump_bf16(
+        "/tmp/cuda_flash_attention.txt",
+        flash_output.data_bf16(),
+        32 * tokens * 64
+    );
     // =========================================================
     // 7. Flash output layout conversion
     //
@@ -357,11 +370,11 @@ if (err != cudaSuccess)
     );
     cudaDeviceSynchronize();
 
-debug_bf16(
-    "ATTENTION_INPUT",
-    attention_input.data_bf16(),
-    tokens * 2048
-);
+    dump_bf16(
+        "/tmp/cuda_attention_input.txt",
+        attention_input.data_bf16(),
+        tokens * 2048
+    );
     // =========================================================
     // 8. Output projection
     //
@@ -369,6 +382,11 @@ debug_bf16(
     //        ↓
     // [tokens, 2048]
     // =========================================================
+    dump_bf16(
+        "/tmp/cuda_o_proj.txt",
+        o_proj_,
+        2048 * 2048
+    );
 
     launch_gemm_2048x2048(
         attention_input.data_bf16(),
@@ -380,10 +398,10 @@ debug_bf16(
     );
     cudaDeviceSynchronize();
 
-    debug_bf16(
-        "K",
-        k.data_bf16(),
-        tokens * 512
+    dump_bf16(
+        "/tmp/cuda_attention_output.txt",
+        output.data_bf16(),
+        tokens * 2048
     );
-}
+    }
 }

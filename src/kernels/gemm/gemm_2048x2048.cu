@@ -3,7 +3,7 @@
 // Run: ./wmma_2048x2048
 /*
 Kernel	        Matrix	    Recommended CTA
-gemm_2048x2048	2048×2048	64×64
+gemm_2048x2048	2048×2048	32×64
 */
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -20,7 +20,7 @@ using namespace nvcuda;
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
-constexpr int CTA_M = 64;
+constexpr int CTA_M = 32;
 constexpr int CTA_N = 64;
 
 // =====================================================

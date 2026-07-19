@@ -20,7 +20,7 @@ constexpr int ROPE_ROTARY_DIM = ROPE_HEAD_DIM / 2;
 // ======================================================
 // CUDA Error Checking
 // ======================================================
-
+#ifndef CUDA_CHECK
 #define CUDA_CHECK(call)                                      \
 do {                                                          \
     cudaError_t err = call;                                   \
@@ -33,8 +33,7 @@ do {                                                          \
         exit(EXIT_FAILURE);                                  \
     }                                                         \
 } while(0)
-
-
+#endif
 // ======================================================
 // RoPE Launcher
 //

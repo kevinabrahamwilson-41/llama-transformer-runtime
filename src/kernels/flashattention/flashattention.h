@@ -1,5 +1,4 @@
 #pragma once
-
 // ============================================================================
 // Flash Attention — Standalone Header
 //
@@ -22,13 +21,10 @@
 //   - L (optional) is [batch_size * num_heads, seq_len] in FP32
 //   - Minimum compute capability: sm_80 (Ampere)
 // ============================================================================
-
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-
-
 // ============================================================================
 // Error checking macro
 // ============================================================================
@@ -73,7 +69,6 @@ struct FlashAttentionParams {
                // the pointers are typed half* as address carriers.
   cudaStream_t stream;
 };
-
 // Implemented in kernels/flash_attention.cu
 void launch_flash_attention(const FlashAttentionParams &params);
 }

@@ -89,9 +89,9 @@ void bf16_tensorcore_gemm_2048x512(
     int K
 ) {
     constexpr int AS_STRIDE = WMMA_K + 8;
-    constexpr int BS_STRIDE = CTA_N + 8;
-    __shared__ __nv_bfloat16 As[2][CTA_M][AS_STRIDE];
-    __shared__ __nv_bfloat16 Bs[2][WMMA_K][BS_STRIDE];
+    constexpr int BS_STRIDE = CTA_N;
+    __shared__ __align__(16) __nv_bfloat16 As[2][CTA_M][AS_STRIDE];
+    __shared__ __align__(16) __nv_bfloat16 Bs[2][WMMA_K][CTA_N];
     constexpr int C_STRIDE = WMMA_N;
     __shared__ float smem_C[8][WMMA_M][WMMA_N];
     int warp = threadIdx.x / 32;
@@ -113,20 +113,23 @@ void bf16_tensorcore_gemm_2048x512(
         idx += blockDim.x)
     {
         int offset = idx * COPY_ELEMS;
+
         int r = offset / WMMA_K;
         int c = offset % WMMA_K;
+
         if (cta_row_start + r < M)
         {
-            cp_async_b16(
-                &As[0][r][c],
-                &A[(cta_row_start + r) * K + c]
-            );
+            for(int i = 0; i < COPY_ELEMS; i++)
+            {
+                As[0][r][c+i] =
+                    A[(cta_row_start+r)*K + c+i];
+            }
         }
         else
         {
-            for (int i = 0; i < COPY_ELEMS; ++i)
+            for(int i = 0; i < COPY_ELEMS; i++)
             {
-                As[0][r][c + i] =
+                As[0][r][c+i] =
                     __float2bfloat16(0.0f);
             }
         }
@@ -135,16 +138,17 @@ void bf16_tensorcore_gemm_2048x512(
         idx < (WMMA_K * CTA_N) / COPY_ELEMS;
         idx += blockDim.x)
     {
-            int offset = idx * COPY_ELEMS;
-            int r = offset / CTA_N;
-            int c = offset % CTA_N;
-            cp_async_b16(
-                &Bs[0][r][c],
-                &B[r*N + cta_col_start+c]
-            );
+        int offset = idx * COPY_ELEMS;
+
+        int r = offset / CTA_N;
+        int c = offset % CTA_N;
+
+        for(int i = 0; i < COPY_ELEMS; i++)
+        {
+            Bs[0][r][c+i] =
+                B[(cta_col_start+c+i)*K + r];
         }
-        cp_async_commit();
-        cp_async_wait();
+    }
         __syncthreads();
         wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K,
                 __nv_bfloat16, wmma::row_major> a_frag;
@@ -155,8 +159,8 @@ void bf16_tensorcore_gemm_2048x512(
         const __nv_bfloat16* tile_A =
             &As[stage][warp_row * WMMA_M][0];
 
-        const __nv_bfloat16* tile_B =
-            &Bs[stage][0][warp_col * WMMA_N];
+    const __nv_bfloat16* tile_B =
+        &Bs[stage][0][warp_col * WMMA_N];
         // Load current tile from shared memory
         wmma::load_matrix_sync(
             a_frag,
@@ -184,13 +188,17 @@ void bf16_tensorcore_gemm_2048x512(
                 int c = offset % WMMA_K;
                 if (cta_row_start + r < M)
                 {
-                    cp_async_b16(
-                        &As[next_stage][r][c],
-                        &A[
-                            (cta_row_start + r) * K +
-                            (k + WMMA_K + c)
-                        ]
-                    );
+                    for(int i = 0; i < COPY_ELEMS; i++)
+                    {
+                        if(c + i < WMMA_K)
+                        {
+                            As[next_stage][r][c+i] =
+                                A[
+                                    (cta_row_start + r) * K +
+                                    (k + WMMA_K + c + i)
+                                ];
+                        }
+                    }
                 }
                 else
                 {
@@ -209,13 +217,15 @@ void bf16_tensorcore_gemm_2048x512(
                 int offset = idx * COPY_ELEMS;
                 int r = offset / CTA_N;
                 int c = offset % CTA_N;
-                cp_async_b16(
-                    &Bs[next_stage][r][c],
-                    &B[(k+WMMA_K+r)*N +
-                    (cta_col_start+c)]
-                );
+                for(int i = 0; i < COPY_ELEMS; i++)
+                {
+                    Bs[next_stage][r][c+i] =
+                        B[
+                            (cta_col_start+c+i) * K +
+                            (k + WMMA_K + r)
+                        ];
+                }
             }
-            cp_async_commit();
         }
         // ==============================
         // COMPUTE CURRENT TILE
@@ -232,7 +242,6 @@ void bf16_tensorcore_gemm_2048x512(
 
         if (k + WMMA_K < K)
         {
-            cp_async_wait();
             __syncthreads();
             stage ^= 1;
         }
@@ -258,10 +267,8 @@ void bf16_tensorcore_gemm_2048x512(
             C[
                 (tile_row + r) * N +
                 tile_col + c
-            ] =
-                __float2bfloat16(
-                    tile_C[r * C_STRIDE + c]
-                );
+            ] = __float2bfloat16(
+        tile_C[r * C_STRIDE + c]);
         }
     }
 }

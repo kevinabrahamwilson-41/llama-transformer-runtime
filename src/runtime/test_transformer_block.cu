@@ -125,8 +125,95 @@ int main(){
         WEIGHTS_PATH,
         weights
     );
+    // TEMP: dump K projection weights
+
+constexpr int K_ELEMENTS = 2048 * 512;
+
+std::vector<__nv_bfloat16> host_k(
+    K_ELEMENTS
+);
 
 
+CUDA_CHECK(
+    cudaMemcpy(
+        host_k.data(),
+        weights.layers[0].k_proj,
+        K_ELEMENTS * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    )
+);
+
+
+FILE* f = fopen(
+    "/tmp/k_weight_dump.txt",
+    "w"
+);
+
+
+if(!f)
+{
+    printf("Failed opening k dump\n");
+    exit(1);
+}
+
+
+for(int i = 0; i < K_ELEMENTS; i++)
+{
+    fprintf(
+        f,
+        "%.9g\n",
+        __bfloat162float(
+            host_k[i]
+        )
+    );
+}
+
+
+fclose(f);
+
+
+printf(
+    "[TEST] K weight dumped.\n"
+);
+
+constexpr int V_ELEMENTS = 2048 * 512;
+
+std::vector<__nv_bfloat16> host_v(
+    V_ELEMENTS
+);
+
+CUDA_CHECK(
+    cudaMemcpy(
+        host_v.data(),
+        weights.layers[0].v_proj,
+        V_ELEMENTS * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    )
+);
+
+
+FILE* fv = fopen(
+    "/tmp/v_weight_dump.txt",
+    "w"
+);
+
+
+for(int i = 0; i < V_ELEMENTS; i++)
+{
+    fprintf(
+        fv,
+        "%.9g\n",
+        __bfloat162float(host_v[i])
+    );
+}
+
+
+fclose(fv);
+
+
+printf(
+    "[TEST] V weight dumped.\n"
+);
     printf(
         "[TEST] Real weights loaded.\n\n"
     );

@@ -22,6 +22,7 @@ attention.cu
 #include "../kernels/rope/rope.hpp"
 #include "../kernels/flashattention/flashattention.h"
 #include "layout.hpp"
+#include <vector>
 #include "debug_dump.hpp"
 namespace runtime{
 #define CUDA_CHECK(call)                                      \
@@ -65,7 +66,13 @@ void Attention::forward(
         static_cast<int>(
             input.shape()[0]
         );
-
+    printf(
+    "\n========== ATTENTION FORWARD ==========\n"
+    );
+    printf(
+        "ATTENTION TOKENS = %d\n",
+        tokens
+    );
     // =========================================================
     // 1. RMSNorm
     //
@@ -102,6 +109,10 @@ void Attention::forward(
     Tensor q(
         {tokens, 2048},
         DataType::BF16
+    );
+    printf(
+        "[ATTENTION] Q GEMM: M=%d N=2048 K=2048\n",
+        tokens
     );
 
     launch_gemm_2048x2048(
@@ -142,6 +153,10 @@ void Attention::forward(
         {tokens, 512},
         DataType::BF16
     );
+    printf(
+        "[ATTENTION] K GEMM: M=%d N=512 K=2048\n",
+        tokens
+    );
 
     launch_gemm_2048x512(
         normalized.data_bf16(),
@@ -151,6 +166,54 @@ void Attention::forward(
         512,
         2048
     );
+    cudaDeviceSynchronize();
+
+std::vector<__nv_bfloat16> h_k(tokens * 512);
+
+cudaMemcpy(
+    h_k.data(),
+    k.data_bf16(),
+    tokens * 512 * sizeof(__nv_bfloat16),
+    cudaMemcpyDeviceToHost
+);
+
+printf("K GEMM first values:\n");
+
+for(int i = 0; i < 10; i++)
+{
+    printf("%f\n",
+        __bfloat162float(h_k[i])
+    );
+}
+
+printf(
+    "K[6556] = %f\n",
+    __bfloat162float(h_k[6556])
+);
+
+cudaMemcpy(
+    h_k.data(),
+    k.data_bf16(),
+    tokens * 512 * sizeof(__nv_bfloat16),
+    cudaMemcpyDeviceToHost
+);
+
+
+printf("K GEMM first values:\n");
+
+for(int i = 0; i < 10; i++)
+{
+    printf(
+        "%f\n",
+        __bfloat162float(h_k[i])
+    );
+}
+
+
+printf(
+    "K[6556] = %f\n",
+    __bfloat162float(h_k[6556])
+);
     dump_bf16(
         "/tmp/cuda_k.txt",
         k.data_bf16(),
@@ -167,6 +230,10 @@ void Attention::forward(
     Tensor v(
         {tokens, 512},
         DataType::BF16
+    );
+    printf(
+        "[ATTENTION] V GEMM: M=%d N=512 K=2048\n",
+        tokens
     );
 
     launch_gemm_2048x512(
@@ -318,7 +385,11 @@ void Attention::forward(
             flash_params.num_kv_heads,
             flash_params.scale
         );
-
+        printf(
+            "[ATTENTION] FLASH ATTENTION: "
+            "seq=%d heads=32 kv_heads=8 d_head=64\n",
+            tokens
+        );
         transformer::launch_flash_attention(
             flash_params
         );
@@ -387,7 +458,10 @@ void Attention::forward(
         o_proj_,
         2048 * 2048
     );
-
+    printf(
+        "[ATTENTION] O GEMM: M=%d N=2048 K=2048\n",
+        tokens
+    );
     launch_gemm_2048x2048(
         attention_input.data_bf16(),
         o_proj_,
@@ -397,6 +471,24 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
+
+    printf("O GEMM first values:\n");
+
+    std::vector<__nv_bfloat16> h_output(tokens * 2048);
+
+    cudaMemcpy(
+        h_output.data(),
+        output.data_bf16(),
+        tokens * 2048 * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+
+    for(int i=0;i<10;i++)
+    {
+        printf("%f\n",
+            __bfloat162float(h_output[i])
+        );
+    }
 
     dump_bf16(
         "/tmp/cuda_attention_output.txt",

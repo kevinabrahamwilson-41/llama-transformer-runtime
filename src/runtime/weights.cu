@@ -1,17 +1,12 @@
 #include "weights.hpp"
-
 #include <cuda_runtime.h>
-
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-namespace llama
-{
-
+namespace llama {
 // ============================================================
 // CUDA ERROR CHECKING
 // ============================================================
@@ -52,15 +47,15 @@ constexpr std::size_t Q_PROJ_ELEMENTS =
     static_cast<std::size_t>(HIDDEN_SIZE) *
     HIDDEN_SIZE;
 
+// CORRECT: [HIDDEN_SIZE, NUM_KV_HEADS * HEAD_DIM]
 constexpr std::size_t K_PROJ_ELEMENTS =
-    static_cast<std::size_t>(NUM_KV_HEADS) *
-    HEAD_DIM *
-    HIDDEN_SIZE;
+    static_cast<std::size_t>(HIDDEN_SIZE) *
+    (NUM_KV_HEADS * HEAD_DIM);  // Results in [2048, 512]
 
+// CORRECT: [HIDDEN_SIZE, NUM_KV_HEADS * HEAD_DIM]
 constexpr std::size_t V_PROJ_ELEMENTS =
-    static_cast<std::size_t>(NUM_KV_HEADS) *
-    HEAD_DIM *
-    HIDDEN_SIZE;
+    static_cast<std::size_t>(HIDDEN_SIZE) *
+    (NUM_KV_HEADS * HEAD_DIM);  // Results in [2048, 512]
 
 constexpr std::size_t O_PROJ_ELEMENTS =
     static_cast<std::size_t>(HIDDEN_SIZE) *
@@ -235,6 +230,65 @@ static void load_tensor(
     ));
 }
 
+// ============================================================
+// LOAD TRANSPOSED TENSOR
+// Used for matrices consumed as B in GEMM
+// ============================================================
+
+static void load_tensor_transposed(
+    std::ifstream& file,
+    __nv_bfloat16* destination,
+    int rows,
+    int cols,
+    std::vector<std::uint8_t>& host_buffer
+)
+{
+    const std::size_t elements =
+        static_cast<std::size_t>(rows) * cols;
+
+    const std::size_t bytes =
+        elements * BF16_BYTES;
+
+
+    // temporary raw tensor
+    std::vector<__nv_bfloat16> temp(elements);
+
+
+    file.read(
+        reinterpret_cast<char*>(temp.data()),
+        static_cast<std::streamsize>(bytes)
+    );
+
+
+    if (!file)
+    {
+        throw std::runtime_error(
+            "Failed to read tensor"
+        );
+    }
+
+
+    // transpose
+    std::vector<__nv_bfloat16> transposed(elements);
+
+
+    for(int i = 0; i < rows; i++)
+    {
+        for(int j = 0; j < cols; j++)
+        {
+            transposed[j * rows + i] =
+                temp[i * cols + j];
+        }
+    }
+
+
+    CUDA_CHECK(cudaMemcpy(
+        destination,
+        transposed.data(),
+        bytes,
+        cudaMemcpyHostToDevice
+    ));
+}
 
 // ============================================================
 // LOAD WEIGHTS
@@ -397,28 +451,31 @@ void load_weights(
         );
 
 
-        load_tensor(
+        load_tensor_transposed(
             file,
             w.down_proj,
-            DOWN_PROJ_ELEMENTS,
+            HIDDEN_SIZE,
+            INTERMEDIATE_SIZE,
             host_buffer
         );
 
 
-        load_tensor(
-            file,
-            w.gate_proj,
-            GATE_PROJ_ELEMENTS,
-            host_buffer
-        );
+    load_tensor_transposed(
+        file,
+        w.gate_proj,
+        INTERMEDIATE_SIZE,
+        HIDDEN_SIZE,
+        host_buffer
+    );
 
 
-        load_tensor(
-            file,
-            w.up_proj,
-            UP_PROJ_ELEMENTS,
-            host_buffer
-        );
+    load_tensor_transposed(
+        file,
+        w.up_proj,
+        INTERMEDIATE_SIZE,
+        HIDDEN_SIZE,
+        host_buffer
+    );
 
 
         load_tensor(
@@ -435,15 +492,37 @@ void load_weights(
             K_PROJ_ELEMENTS,
             host_buffer
         );
-
-
-        load_tensor(
+        // ----------------------------------------------------
+        // O PROJECTION (STORE TRANSPOSED)
+        // ----------------------------------------------------
+        load_tensor_transposed(
             file,
             w.o_proj,
-            O_PROJ_ELEMENTS,
+            HIDDEN_SIZE,
+            HIDDEN_SIZE,
             host_buffer
         );
 
+
+        // DEBUG ONLY
+        std::vector<__nv_bfloat16> check(10);
+
+        CUDA_CHECK(cudaMemcpy(
+            check.data(),
+            w.o_proj,
+            sizeof(__nv_bfloat16) * 10,
+            cudaMemcpyDeviceToHost
+        ));
+
+        std::printf("O TRANSPOSED FIRST:\n");
+
+        for(int i = 0; i < 10; i++)
+        {
+            std::printf(
+                "%f\n",
+                __bfloat162float(check[i])
+            );
+        }
 
         load_tensor(
             file,

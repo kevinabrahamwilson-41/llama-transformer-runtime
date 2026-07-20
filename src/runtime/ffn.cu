@@ -6,6 +6,8 @@
 #include "../kernels/silu/silu_8192.hpp"
 #include "../kernels/rmsnorm/rmsnorm.hpp"
 #include <cuda_runtime.h>
+#include <cstdio>
+#include <vector>
 namespace runtime
 {
 FeedForward::FeedForward(
@@ -19,6 +21,51 @@ FeedForward::FeedForward(
       up_proj_(up_proj),
       down_proj_(down_proj)
 {
+}
+static void dump_tensor(
+    const char* path,
+    const __nv_bfloat16* device_tensor,
+    int elements
+)
+{
+    std::vector<__nv_bfloat16> host(elements);
+
+    cudaMemcpy(
+        host.data(),
+        device_tensor,
+        elements * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+
+
+    FILE* file = std::fopen(path, "w");
+
+    if (!file)
+    {
+        printf("Failed to open dump file\n");
+        exit(EXIT_FAILURE);
+    }
+
+
+    for(int i = 0; i < elements; i++)
+    {
+        float value =
+            __bfloat162float(host[i]);
+
+        fprintf(
+            file,
+            "%.9g\n",
+            value
+        );
+    }
+
+
+    fclose(file);
+
+    printf(
+        "[TEST] Dumped tensor: %s\n",
+        path
+    );
 }
 void FeedForward::forward(
     const Tensor& input,
@@ -57,6 +104,11 @@ void FeedForward::forward(
         tokens,
         1e-5f
     );
+    dump_tensor(
+        "/tmp/cuda_ffn_norm.txt",
+        normalized.data_bf16(),
+        tokens * 2048
+    );
     // =========================================================
     // W1 / gate projection
     //
@@ -73,7 +125,11 @@ void FeedForward::forward(
         8192,
         2048
     );
-
+    dump_tensor(
+        "/tmp/cuda_gate.txt",
+        gate.data_bf16(),
+        tokens * 8192
+    );
     // =========================================================
     // W3 / up projection
     //
@@ -90,7 +146,11 @@ void FeedForward::forward(
         8192,
         2048
     );
-
+    dump_tensor(
+        "/tmp/cuda_up.txt",
+        up.data_bf16(),
+        tokens * 8192
+    );
     // =========================================================
     // SiLU(gate) * up
     // =========================================================
@@ -102,7 +162,11 @@ void FeedForward::forward(
         tokens,
         8192
     );
-
+    dump_tensor(
+        "/tmp/cuda_activated.txt",
+        activated.data_bf16(),
+        tokens * 8192
+    );
     // =========================================================
     // W2 / down projection
     //
@@ -118,6 +182,11 @@ void FeedForward::forward(
         tokens,
         2048,
         8192
+    );
+    dump_tensor(
+        "/tmp/cuda_down_proj_output.txt",
+        output.data_bf16(),
+        tokens * 2048
     );
 }
 

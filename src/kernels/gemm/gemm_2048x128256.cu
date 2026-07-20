@@ -2,8 +2,8 @@
 // Compile: nvcc -arch=sm_89 -O3 gemm_2048x8192.cu -lcublas -o wmma_2048x8192
 // Run: ./wmma_2048x8192
 /*
-Kernel	        Matrix	    Recommended CTA
-gemm_2048x8192	2048×8192	64×128
+Kernel	           Matrix	    Recommended CTA
+gemm_2048x128256   2048x128256	64×128
 */
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -20,8 +20,8 @@ using namespace nvcuda;
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
-constexpr int CTA_M = 128;
-constexpr int CTA_N = 128;
+constexpr int CTA_M = 32;
+constexpr int CTA_N = 64;
 
 // =====================================================
 // cp.async helper
@@ -141,7 +141,9 @@ void bf16_tensorcore_gemm_2048x128256(
             int c = offset % CTA_N;
             cp_async_b16(
                 &Bs[0][r][c],
-                &B[r*N + cta_col_start+c]
+                &B[
+                    (cta_col_start + c) * K + r
+                ]
             );
         }
         cp_async_commit();
@@ -212,8 +214,10 @@ void bf16_tensorcore_gemm_2048x128256(
                 int c = offset % CTA_N;
                 cp_async_b16(
                     &Bs[next_stage][r][c],
-                    &B[(k+WMMA_K+r)*N +
-                    (cta_col_start+c)]
+                    &B[
+                        (cta_col_start + c) * K
+                        + (k + WMMA_K + r)
+                    ]
                 );
             }
             cp_async_commit();
@@ -274,7 +278,7 @@ void launch_gemm_2048x128256(
     int K
 )
 {
-    dim3 block(256);        // 4 warps
+    dim3 block(256);        // 8 warps
     dim3 grid(
         (N + CTA_N - 1) / CTA_N,
         (M + CTA_M - 1) / CTA_M

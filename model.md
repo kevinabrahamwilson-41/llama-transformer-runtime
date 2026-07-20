@@ -186,3 +186,30 @@ FeedForward
 Your LOQ RTX 4060 just chewed through ~137 billion attention FLOPs in 6.6 milliseconds.
 
 ```s
+
+
+```
+LlamaRuntime                ← whole model inference
+│
+├── Embedding
+│
+├── Transformer              ← the 16 decoder layers only
+│   │
+│   ├── TransformerBlock 0
+│   │     ├── Attention
+│   │     └── FFN
+│   │
+│   ├── TransformerBlock 1
+│   │
+│   ...
+│   │
+│   └── TransformerBlock 15
+│
+├── Final RMSNorm
+│
+├── LM Head
+│
+└── Sampling
+    ├── Argmax
+    └── Top-k
+```

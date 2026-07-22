@@ -57,3 +57,5 @@ logs/
 tmp/
 temp/
 .cache/
+conversion.py
+inspect_values.py

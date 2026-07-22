@@ -1,6 +1,5 @@
 import json
 import struct
-
 PATH = "weights/llama-3.2-1b-instruct/model.safetensors"
 
 with open(PATH, "rb") as f:

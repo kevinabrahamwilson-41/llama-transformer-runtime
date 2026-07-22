@@ -54,22 +54,17 @@ namespace transformer::tokenizer{
     TokenSequence Tokenizer::encode(
         const std::string& text,
         const EncodeOptions& options
-    ) const
-    {
+    ) const{
         TokenSequence output;
-        if(options.bos)
-        {
+        if(options.bos){
             output.push_back(bos_id_);
         }
         size_t pos = 0;
-        while(pos < text.size())
-        {
+        while(pos < text.size()){
             bool found_special = false;
             // Check if any special token starts here
-            for(const auto& [token, id] : model_.special_tokens)
-            {
-                if(text.compare(pos, token.size(), token) == 0)
-                {
+            for(const auto& [token, id] : model_.special_tokens){
+                if(text.compare(pos, token.size(), token) == 0){
                     output.push_back(id);
                     pos += token.size();
                     found_special = true;
@@ -80,24 +75,20 @@ namespace transformer::tokenizer{
                 continue;
             // Find next special token boundary
             size_t next_special = text.size();
-            for(const auto& [token, id] : model_.special_tokens)
-            {
+            for(const auto& [token, id] : model_.special_tokens){
                 size_t found = text.find(token, pos);
                 if(found != std::string::npos &&
-                found < next_special)
-                {
+                found < next_special){
                     next_special = found;
                 }
             }
             // Normal text before special token
             std::string normal_piece =
                 text.substr(pos, next_special - pos);
-            if(!normal_piece.empty())
-            {
+            if(!normal_piece.empty()){
                 auto pieces =
                     RegexSplitter::split(normal_piece);
-                for(const auto& piece : pieces)
-                {
+                for(const auto& piece : pieces){
                     auto tokens =
                         BPE::encode_piece(
                             piece,
@@ -112,8 +103,7 @@ namespace transformer::tokenizer{
             }
             pos = next_special;
         }
-        if(options.eos)
-        {
+        if(options.eos){
             output.push_back(eos_id_);
         }
         return output;
@@ -134,36 +124,28 @@ namespace transformer::tokenizer{
         }
         return output;
     }
-    TokenID Tokenizer::bos_id() const noexcept
-    {
+    TokenID Tokenizer::bos_id() const noexcept{
         return bos_id_;
     }
-    TokenID Tokenizer::eos_id() const noexcept
-    {
+    TokenID Tokenizer::eos_id() const noexcept{
         return eos_id_;
     }
-    TokenID Tokenizer::pad_id() const noexcept
-    {
+    TokenID Tokenizer::pad_id() const noexcept{
         return pad_id_;
     }
-    TokenID Tokenizer::eot_id() const noexcept
-    {
+    TokenID Tokenizer::eot_id() const noexcept{
         return eot_id_;
     }
-    TokenID Tokenizer::eom_id() const noexcept
-    {
+    TokenID Tokenizer::eom_id() const noexcept{
         return eom_id_;
     }
-    TokenID Tokenizer::python_tag_id() const noexcept
-    {
+    TokenID Tokenizer::python_tag_id() const noexcept{
         return python_tag_id_;
     }
-    const TokenizerModel& Tokenizer::model() const noexcept
-    {
+    const TokenizerModel& Tokenizer::model() const noexcept{
         return model_;
     }
-    std::size_t Tokenizer::vocab_size() const noexcept
-    {
+    std::size_t Tokenizer::vocab_size() const noexcept{
         return model_.vocab_size();
     }
 }

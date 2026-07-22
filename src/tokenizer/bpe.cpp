@@ -20,26 +20,19 @@ namespace transformer::tokenizer{
             0,
             std::numeric_limits<Rank>::max()
         };
-
         if(pieces.size()<2)
             return best;
-
         for(std::size_t i=0;i+1<pieces.size();i++){
-
             BytePiece pair;
             pair.reserve(
                 pieces[i].size()+
                 pieces[i+1].size()
             );
-
             pair+=pieces[i];
             pair+=pieces[i+1];
-
             auto it=mergeable_ranks.find(pair);
-
             if(it==mergeable_ranks.end())
                 continue;
-
             if(it->second<best.rank){
                 best.left_index=i;
                 best.right_index=i+1;

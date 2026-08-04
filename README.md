@@ -110,4 +110,4 @@ Datatype:
 BF16
 ```
 
-
+PagedAttention, Tensor Parallelism NCCL, BPE tokenizer, CNN/Transformer Inference Engines in AMD Versal Premium VP1902 Adaptive SoC (Part number: xcvp1902-vsva5601-2MP-e-S).

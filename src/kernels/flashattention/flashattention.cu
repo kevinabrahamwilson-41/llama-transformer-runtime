@@ -100,8 +100,8 @@ template <int BLOCK_M, int BLOCK_N, int D_HEAD, int NUM_WARPS, bool CAUSAL,
           class T>
 __global__ void flash_attention_fat_kernel(
     const T *__restrict__ Q, const T *__restrict__ K, const T *__restrict__ V,
-    T *__restrict__ O, float *__restrict__ LSE, const int seq_len,
-    const int num_q_heads, const int num_kv_heads, const float scale) {
+    T *__restrict__ O, float *__restrict__ LSE, const int q_seq_len,
+    const int kv_seq_len, const int num_q_heads, const int num_kv_heads, const float scale) {
   static_assert(BLOCK_M == 16 * NUM_WARPS, "one m16 tile per warp");
   static_assert(BLOCK_N % 16 == 0 && D_HEAD % 16 == 0, "tile granularity");
   static_assert(BLOCK_M <= BLOCK_N, "Q stages through smem_k");
@@ -109,10 +109,11 @@ __global__ void flash_attention_fat_kernel(
   const int bh_idx = blockIdx.y;
   const int q_start = blockIdx.x * BLOCK_M;
   const int tid = threadIdx.x + threadIdx.y * WARP_SIZE_FA;
+  const int q_offset = kv_seq_len - q_seq_len;
   const int warp_id = threadIdx.y;
   const int lane_id = threadIdx.x;
   constexpr int THREADS = WARP_SIZE_FA * NUM_WARPS;
-  if (q_start >= seq_len)
+  if (q_start >= q_seq_len)
     return;
 
   constexpr int SMEM_PAD = 8;
@@ -129,9 +130,9 @@ __global__ void flash_attention_fat_kernel(
   const int b = bh_idx / num_q_heads;
   const int h_q = bh_idx - b * num_q_heads;
   const int h_kv = h_q / (num_q_heads / num_kv_heads);
-  const size_t q_off = static_cast<size_t>(bh_idx) * seq_len * D_HEAD;
+  const size_t q_off = static_cast<size_t>(bh_idx) * q_seq_len * D_HEAD;
   const size_t kv_off =
-      static_cast<size_t>(b * num_kv_heads + h_kv) * seq_len * D_HEAD;
+      static_cast<size_t>(b * num_kv_heads + h_kv) * kv_seq_len * D_HEAD;
   const T *Q_head = Q + q_off;
   const T *K_head = K + kv_off;
   const T *V_head = V + kv_off;
@@ -148,7 +149,7 @@ __global__ void flash_attention_fat_kernel(
     for (int idx = tid; idx < BLOCK_M * VEC_COLS; idx += THREADS) {
       int row = idx / VEC_COLS, col = idx % VEC_COLS;
       int g = q_start + row;
-      uint4 val = (g < seq_len)
+      uint4 val = (g < q_seq_len)
                       ? reinterpret_cast<const uint4 *>(Q_head + g * D_HEAD)[col]
                       : make_uint4(0, 0, 0, 0);
       reinterpret_cast<uint4 *>(smem_k + row * KV_STRIDE)[col] = val;
@@ -168,7 +169,8 @@ __global__ void flash_attention_fat_kernel(
   float row_max0 = -FLT_MAX, row_max1 = -FLT_MAX;
   float row_sum0 = 0.0f, row_sum1 = 0.0f;
 
-  const int kv_end = CAUSAL ? min(q_start + BLOCK_M, seq_len) : seq_len;
+  const int kv_end = kv_seq_len;
+  //CAUSAL ? min(q_start + BLOCK_M, seq_len) : seq_len;
   const int num_kv_tiles = (kv_end + BLOCK_N - 1) / BLOCK_N;
 
   constexpr int VEC_COLS = D_HEAD / 8;
@@ -185,11 +187,11 @@ __global__ void flash_attention_fat_kernel(
     }
     cp_async_commit_group();
   };
-  issue_k(0, min(BLOCK_N, seq_len)); // prologue: K(0)
+  issue_k(0, min(BLOCK_N, kv_seq_len)); // prologue: K(0)
 
   for (int kv_tile = 0; kv_tile < num_kv_tiles; kv_tile++) {
     const int kv_start = kv_tile * BLOCK_N;
-    const int kv_count = min(BLOCK_N, seq_len - kv_start);
+    const int kv_count = min(BLOCK_N, kv_seq_len - kv_start);
 
     cp_async_wait_group<0>(); // K(i) landed (only group in flight here)
     __syncthreads();          // K visible to all warps
@@ -232,10 +234,14 @@ __global__ void flash_attention_fat_kernel(
       for (int i = 0; i < 4; i++)
         s_acc[ni][i] *= scale2;
       if (CAUSAL) {
-        if (kv_start + s_col0 > q_start + global_row0) s_acc[ni][0] = -FLT_MAX;
-        if (kv_start + s_col1 > q_start + global_row0) s_acc[ni][1] = -FLT_MAX;
-        if (kv_start + s_col0 > q_start + global_row1) s_acc[ni][2] = -FLT_MAX;
-        if (kv_start + s_col1 > q_start + global_row1) s_acc[ni][3] = -FLT_MAX;
+          if (kv_start + s_col0 > q_offset + q_start + global_row0)
+              s_acc[ni][0] = -FLT_MAX;
+          if (kv_start + s_col1 > q_offset + q_start + global_row0)
+              s_acc[ni][1] = -FLT_MAX;
+          if (kv_start + s_col0 > q_offset + q_start + global_row1)
+              s_acc[ni][2] = -FLT_MAX;
+          if (kv_start + s_col1 > q_offset + q_start + global_row1)
+              s_acc[ni][3] = -FLT_MAX;
       }
       if (s_col0 >= kv_count) { s_acc[ni][0] = -FLT_MAX; s_acc[ni][2] = -FLT_MAX; }
       if (s_col1 >= kv_count) { s_acc[ni][1] = -FLT_MAX; s_acc[ni][3] = -FLT_MAX; }
@@ -295,7 +301,7 @@ __global__ void flash_attention_fat_kernel(
     // K(i+1): streams behind PV into the now-dead smem_k.
     if (kv_tile + 1 < num_kv_tiles) {
       int ks = (kv_tile + 1) * BLOCK_N;
-      issue_k(ks, min(BLOCK_N, seq_len - ks));
+      issue_k(ks, min(BLOCK_N, kv_seq_len - ks));
     }
 #pragma unroll
     for (int ki = 0; ki < TILES_BN; ki++) {
@@ -327,13 +333,17 @@ __global__ void flash_attention_fat_kernel(
       int col1 = col0 + 1;
       int gq0 = q_start + global_row0;
       int gq1 = q_start + global_row1;
-      if (gq0 < seq_len) {
-        O_head[gq0 * D_HEAD + col0] = to_elem<T>(o_acc[di][0] * inv0);
-        O_head[gq0 * D_HEAD + col1] = to_elem<T>(o_acc[di][1] * inv0);
+      if (gq0 < q_seq_len) {
+          O_head[gq0 * D_HEAD + col0] =
+              to_elem<T>(o_acc[di][0] * inv0);
+          O_head[gq0 * D_HEAD + col1] =
+              to_elem<T>(o_acc[di][1] * inv0);
       }
-      if (gq1 < seq_len) {
-        O_head[gq1 * D_HEAD + col0] = to_elem<T>(o_acc[di][2] * inv1);
-        O_head[gq1 * D_HEAD + col1] = to_elem<T>(o_acc[di][3] * inv1);
+      if (gq1 < q_seq_len) {
+          O_head[gq1 * D_HEAD + col0] =
+              to_elem<T>(o_acc[di][2] * inv1);
+          O_head[gq1 * D_HEAD + col1] =
+              to_elem<T>(o_acc[di][3] * inv1);
       }
     }
     if (lane_id % 4 == 0 && LSE != nullptr) {
@@ -341,12 +351,12 @@ __global__ void flash_attention_fat_kernel(
       int gq1 = q_start + global_row1;
       // max/sum are in the base-2 domain (see scale2): LSE_e = ln2*(m2+log2 s2)
       constexpr float LN2 = 0.6931471805599453f;
-      if (gq0 < seq_len)
-        LSE[bh_idx * seq_len + gq0] =
-            LN2 * (row_max0 + log2f(fmaxf(row_sum0, 1e-10f)));
-      if (gq1 < seq_len)
-        LSE[bh_idx * seq_len + gq1] =
-            LN2 * (row_max1 + log2f(fmaxf(row_sum1, 1e-10f)));
+      if (gq0 < q_seq_len)
+          LSE[bh_idx * q_seq_len + gq0] =
+              LN2 * (row_max0 + log2f(fmaxf(row_sum0, 1e-10f)));
+      if (gq1 < q_seq_len)
+          LSE[bh_idx * q_seq_len + gq1] =
+              LN2 * (row_max1 + log2f(fmaxf(row_sum1, 1e-10f)));
     }
   }
 }
@@ -365,7 +375,7 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
   constexpr int BM = 64, BN = 64, NW = 4;
   constexpr int KV_STRIDE = D_HEAD + 8;
 
-  const int grid_x = (params.seq_len + BM - 1) / BM;
+  const int grid_x = (params.q_seq_len + BM - 1) / BM;
   dim3 grid(grid_x, params.batch_size * params.num_heads);
   dim3 block(WARP_SIZE_FA, NW);
   size_t smem_bytes = 2 * (size_t)BN * KV_STRIDE * sizeof(T);
@@ -380,12 +390,30 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
 
   if (params.causal) {
     flash_attention_fat_kernel<BM, BN, D_HEAD, NW, true, T>
-        <<<grid, block, smem_bytes, params.stream>>>(
-            Qp, Kp, Vp, Op, params.L, params.seq_len, H_q, H_kv, params.scale);
+      <<<grid, block, smem_bytes, params.stream>>>(
+          Qp,
+          Kp,
+          Vp,
+          Op,
+          params.L,
+          params.q_seq_len,
+          params.kv_seq_len,
+          H_q,
+          H_kv,
+          params.scale);
   } else {
     flash_attention_fat_kernel<BM, BN, D_HEAD, NW, false, T>
-        <<<grid, block, smem_bytes, params.stream>>>(
-            Qp, Kp, Vp, Op, params.L, params.seq_len, H_q, H_kv, params.scale);
+      <<<grid, block, smem_bytes, params.stream>>>(
+          Qp,
+          Kp,
+          Vp,
+          Op,
+          params.L,
+          params.q_seq_len,
+          params.kv_seq_len,
+          H_q,
+          H_kv,
+          params.scale);
   }
   CUDA_CHECK(cudaGetLastError());
 }

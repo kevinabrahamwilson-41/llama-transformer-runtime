@@ -1,5 +1,4 @@
-
-The reference model's actual computation is:
+# Computation Model:
 
 ```text
 Embedding
@@ -13,7 +12,7 @@ LM Head / Output Projection
 Logits
 ```
 
-Inside each block:
+## Inside each block:
 
 ```text
 RMSNorm
@@ -136,7 +135,7 @@ TransformerBlock
     └── w2
         └── 8192 → 2048
 ```
-
+# Full Transformer Anatomy
 ```
 Transformer
 │
@@ -166,7 +165,7 @@ Transformer
     ├── Attention
     └── FeedForward
 ```
-
+# FeedForward 
 ```
 FeedForward
 │
@@ -183,11 +182,14 @@ FeedForward
 ```
 
 ```
-Your LOQ RTX 4060 just chewed through ~137 billion attention FLOPs in 6.6 milliseconds.
+FlashAttention Benchmark
 
-```s
+≈137 GFLOPs of attention computation
+Execution time: ≈6.6 ms
+Implementation: FlashAttention kernel
+```
 
-
+# Runtime Workflow
 ```
 LlamaRuntime                ← whole model inference
 │
@@ -212,4 +214,46 @@ LlamaRuntime                ← whole model inference
 └── Sampling
     ├── Argmax
     └── Top-k
+```
+
+# BPE Tokenizer
+```
+Tokenizer
+│
+├── UTF-8
+│   ├── Decode
+│   └── Unicode Handling
+│
+├── Regex Split
+│   └── Pre-tokenization
+│
+├── BPE
+│   ├── Initial Symbols
+│   ├── Pair Ranking
+│   ├── Merge Loop
+│   └── Final Tokens
+│
+├── Vocabulary
+│   └── Token → ID
+│
+└── Special Tokens
+    ├── BOS
+    ├── EOS
+    └── Reserved Tokens
+```
+# Encoding workflow
+```
+"Hello world!"
+        ↓
+Regex Split
+        ↓
+["Hello", " world", "!"]
+        ↓
+BPE Encoding
+        ↓
+["Hello", " world", "!"]
+        ↓
+Vocabulary Lookup
+        ↓
+[9906, 1917, 0]
 ```

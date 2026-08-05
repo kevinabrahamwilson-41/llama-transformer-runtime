@@ -26,7 +26,8 @@ void rope_q_kernel(
     __nv_bfloat16* q_out,
     const float* cos_table,
     const float* sin_table,
-    int tokens
+    int tokens,
+    int position_offset
 ){
     int warp_id = blockIdx.x * (blockDim.x / 32)
                 + threadIdx.x / 32;
@@ -52,13 +53,14 @@ void rope_q_kernel(
         pos * HEAD_DIM
         +
         pair * 2;
+    int rope_pos = pos + position_offset;
     float c =
         cos_table[
-            pos * ROTARY_DIM + pair
+            rope_pos * ROTARY_DIM + pair
         ];
     float s =
         sin_table[
-            pos * ROTARY_DIM + pair
+            rope_pos * ROTARY_DIM + pair
         ];
     __nv_bfloat162 x =
         *reinterpret_cast<const __nv_bfloat162*>(&q_in[input_offset]);
@@ -84,7 +86,8 @@ void rope_k_kernel(
     __nv_bfloat16* k_out,
     const float* cos_table,
     const float* sin_table,
-    int tokens
+    int tokens,
+    int position_offset
 ){
     int warp_id =
         blockIdx.x * (blockDim.x/32)
@@ -114,10 +117,11 @@ void rope_k_kernel(
         pos * HEAD_DIM
         +
         pair * 2;
+    int rope_pos = pos + position_offset;
     float c =
-        cos_table[pos*ROTARY_DIM+pair];
+        cos_table[rope_pos*ROTARY_DIM+pair];
     float s =
-        sin_table[pos*ROTARY_DIM+pair];
+        sin_table[rope_pos*ROTARY_DIM+pair];
     __nv_bfloat162 x =
         *reinterpret_cast<const __nv_bfloat162*>(&k_in[input_offset]);
     float x0 =
@@ -203,7 +207,8 @@ void launch_rope_qkv(
     __nv_bfloat16* v_out,
     float* cos_table,
     float* sin_table,
-    int tokens
+    int tokens,
+    int position_offset
 ){
     constexpr int WARPS_PER_BLOCK =
         BLOCK_SIZE / 32;
@@ -227,7 +232,8 @@ void launch_rope_qkv(
         q_out,
         cos_table,
         sin_table,
-        tokens
+        tokens,
+        position_offset
     );
 
     CUDA_CHECK(cudaGetLastError());
@@ -252,7 +258,8 @@ void launch_rope_qkv(
         k_out,
         cos_table,
         sin_table,
-        tokens
+        tokens,
+        position_offset
     );
 
     CUDA_CHECK(cudaGetLastError());

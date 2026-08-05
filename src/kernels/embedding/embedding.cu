@@ -32,13 +32,14 @@ __global__
 void embedding_kernel(
     const int* __restrict__ tokens,
     const __nv_bfloat16* __restrict__ embedding_table,
-    __nv_bfloat16* __restrict__ output
+    __nv_bfloat16* __restrict__ output,
+    int seq_len
 ){
     //----------------------------------------------------
     // One block = one token
     //----------------------------------------------------
     const int token_pos = blockIdx.x;
-    if (token_pos >= SEQ_LEN)
+    if (token_pos >= seq_len)
         return;
     //----------------------------------------------------
     // Vocabulary index
@@ -58,8 +59,6 @@ void embedding_kernel(
         token_pos * HIDDEN_DIM;
     //----------------------------------------------------
     // Vectorized BF16 copy
-    // 2048 BF16
-    // = 1024 BF16x2 values
     //----------------------------------------------------
     const __nv_bfloat162* __restrict__ src2 =
         reinterpret_cast<const __nv_bfloat162*>(src);
@@ -68,7 +67,8 @@ void embedding_kernel(
 #pragma unroll
     for (int i = threadIdx.x;
          i < HIDDEN_DIM / 2;
-         i += BLOCK_SIZE){
+         i += BLOCK_SIZE)
+    {
         dst2[i] = src2[i];
     }
 }
@@ -80,11 +80,11 @@ void launch_embedding(
     const int* d_tokens,
     const __nv_bfloat16* d_embedding_table,
     __nv_bfloat16* d_output,
+    int seq_len,
     cudaStream_t stream
-)
-{
+){
     constexpr dim3 block(BLOCK_SIZE);
-    const dim3 grid(SEQ_LEN);
+    dim3 grid(seq_len);
     embedding_kernel<<<
         grid,
         block,
@@ -93,6 +93,7 @@ void launch_embedding(
     >>>(
         d_tokens,
         d_embedding_table,
-        d_output
+        d_output,
+        seq_len
     );
 }

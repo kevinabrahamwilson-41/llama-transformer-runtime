@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cstdint>
 #include <vector>
+#include <utility>
 #include <cstdio>
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
@@ -27,7 +28,7 @@ static void debug_check_tensor(
         elements * sizeof(__nv_bfloat16),
         cudaMemcpyDeviceToHost
     );
-
+/*
     float max_abs = 0.0f;
     int max_idx = 0;
 
@@ -41,14 +42,14 @@ static void debug_check_tensor(
             max_abs = fabsf(value);
             max_idx = i;
         }
-    }
-
+    }*/
+/*
     printf(
         "%s max_abs = %.6f at index %d\n",
         name,
         max_abs,
         max_idx
-    );
+    );*/
 }
 
 static void dump_tensor(
@@ -103,20 +104,20 @@ static float read_device_bf16(
 
     return __bfloat162float(host_value);
 }
-
 TransformerBlock::TransformerBlock(
-    Attention attention,
-    FeedForward ffn
+    Attention&& attention,
+    FeedForward&& ffn
 )
-    : attention_(attention),
-      ffn_(ffn)
+    : attention_(std::move(attention)),
+      ffn_(std::move(ffn))
 {
 }
 
 void TransformerBlock::forward(
     const Tensor& input,
-    Tensor& output
-) const
+    Tensor& output,
+    int position 
+) 
 {
     const int tokens =
         static_cast<int>(
@@ -144,7 +145,8 @@ void TransformerBlock::forward(
 
     attention_.forward(
         input,
-        attention_output
+        attention_output,
+        position
     );
     cudaDeviceSynchronize();
 
@@ -159,11 +161,11 @@ void TransformerBlock::forward(
         tokens
     );
     cudaDeviceSynchronize();
-    std::cout << "ATTENTION[0] = "
-            << read_device_bf16(
-                    attention_output.data_bf16()
-                )
-            << "\n";
+    //std::cout << "ATTENTION[0] = "
+      //      << read_device_bf16(
+        //            attention_output.data_bf16()
+          //      )
+            //<< "\n";
     // =========================================================
     // 2. Attention residual
     //
@@ -197,11 +199,11 @@ void TransformerBlock::forward(
         residual,
         tokens
     );
-    std::cout << "RESIDUAL[0] = "
-            << read_device_bf16(
-                 residual.data_bf16()
-                )
-            << "\n";
+    //std::cout << "RESIDUAL[0] = "
+      //      << read_device_bf16(
+        //         residual.data_bf16()
+          //      )
+            //<< "\n";
     // =========================================================
     // 3. FeedForward
     //
@@ -239,12 +241,11 @@ void TransformerBlock::forward(
         tokens
     );
     cudaDeviceSynchronize();
-
-    std::cout << "FFN[0] = "
-            << read_device_bf16(
-                 ffn_output.data_bf16()
-                )
-            << "\n";
+    //std::cout << "FFN[0] = "
+      //      << read_device_bf16(
+        //         ffn_output.data_bf16()
+          //      )
+            //<< "\n";
     // =========================================================
     // 4. FFN residual
     //
@@ -275,12 +276,11 @@ void TransformerBlock::forward(
         tokens
     );
     //cudaDeviceSynchronize();
-    
-    std::cout << "OUTPUT[0] = "
-            << read_device_bf16(
-                 output.data_bf16()
-                )
-            << "\n";
+    //std::cout << "OUTPUT[0] = "
+      //      << read_device_bf16(
+        //             output.data_bf16()
+          //          )
+            //<< "\n";
 }
 
 } // namespace runtime

@@ -29,6 +29,54 @@ namespace llama {
     } while (0)
 
 
+static void transpose_embedding_to_lm_head(
+    const __nv_bfloat16* src,
+    __nv_bfloat16* dst,
+    int rows,
+    int cols
+)
+{
+    std::vector<__nv_bfloat16> host_src(
+        rows * cols
+    );
+
+    std::vector<__nv_bfloat16> host_dst(
+        rows * cols
+    );
+
+
+    CUDA_CHECK(cudaMemcpy(
+        host_src.data(),
+        src,
+        rows * cols * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    ));
+
+
+    // src:
+    // [VOCAB,HIDDEN]
+    //
+    // dst:
+    // [HIDDEN,VOCAB]
+
+    for(int i = 0; i < rows; i++)
+    {
+        for(int j = 0; j < cols; j++)
+        {
+            host_dst[j * rows + i] =
+                host_src[i * cols + j];
+        }
+    }
+
+
+    CUDA_CHECK(cudaMemcpy(
+        dst,
+        host_dst.data(),
+        rows * cols * sizeof(__nv_bfloat16),
+        cudaMemcpyHostToDevice
+    ));
+}
+
 // ============================================================
 // MODEL WEIGHT SIZES
 // ============================================================
@@ -379,6 +427,10 @@ void load_weights(
         &weights.embed_tokens,
         EMBED_ELEMENTS * BF16_BYTES
     ));
+    CUDA_CHECK(cudaMalloc(
+        &weights.lm_head,
+        EMBED_ELEMENTS * BF16_BYTES
+    ));
     // --------------------------------------------------------
     // Allocate layers
     // --------------------------------------------------------
@@ -418,8 +470,37 @@ void load_weights(
         EMBED_ELEMENTS,
         host_buffer
     );
-
-
+    std::vector<__nv_bfloat16> emb_check(10);
+    CUDA_CHECK(cudaMemcpy(
+        emb_check.data(),
+        weights.embed_tokens,
+        sizeof(__nv_bfloat16)*10,
+        cudaMemcpyDeviceToHost
+    ));
+    std::vector<__nv_bfloat16> emb_host(
+    EMBED_ELEMENTS
+    );
+    CUDA_CHECK(cudaMemcpy(
+        emb_host.data(),
+        weights.embed_tokens,
+        EMBED_ELEMENTS * BF16_BYTES,
+        cudaMemcpyDeviceToHost
+    ));
+    std::vector<__nv_bfloat16> lm_head_host(
+        EMBED_ELEMENTS
+    );
+    for(int i = 0; i < VOCAB_SIZE; i++){
+        for(int j = 0; j < HIDDEN_SIZE; j++){
+            lm_head_host[j * VOCAB_SIZE + i] =
+                emb_host[i * HIDDEN_SIZE + j];
+        }
+    }
+    CUDA_CHECK(cudaMemcpy(
+        weights.lm_head,
+        lm_head_host.data(),
+        EMBED_ELEMENTS * BF16_BYTES,
+        cudaMemcpyHostToDevice
+    ));
     // --------------------------------------------------------
     // TRANSFORMER LAYERS
     // --------------------------------------------------------
@@ -484,12 +565,11 @@ void load_weights(
             NORM_ELEMENTS,
             host_buffer
         );
-
-
-        load_tensor(
+        load_tensor_transposed(
             file,
             w.k_proj,
-            K_PROJ_ELEMENTS,
+            NUM_KV_HEADS * HEAD_DIM,
+            HIDDEN_SIZE,
             host_buffer
         );
         // ----------------------------------------------------
@@ -514,28 +594,27 @@ void load_weights(
             cudaMemcpyDeviceToHost
         ));
 
-        std::printf("O TRANSPOSED FIRST:\n");
-
-        for(int i = 0; i < 10; i++)
-        {
-            std::printf(
-                "%f\n",
-                __bfloat162float(check[i])
-            );
-        }
-
-        load_tensor(
+        //std::printf("O TRANSPOSED FIRST:\n");
+//
+  //      for(int i = 0; i < 10; i++)
+    //    {
+      //      std::printf(
+        //        "%f\n",
+          //      __bfloat162float(check[i])
+        //    );
+       // }
+        load_tensor_transposed(
             file,
             w.q_proj,
-            Q_PROJ_ELEMENTS,
+            HIDDEN_SIZE,
+            HIDDEN_SIZE,
             host_buffer
         );
-
-
-        load_tensor(
+        load_tensor_transposed(
             file,
             w.v_proj,
-            V_PROJ_ELEMENTS,
+            NUM_KV_HEADS * HEAD_DIM,
+            HIDDEN_SIZE,
             host_buffer
         );
     }
@@ -556,15 +635,6 @@ void load_weights(
         NORM_ELEMENTS,
         host_buffer
     );
-
-
-    // --------------------------------------------------------
-    // TIED EMBEDDINGS
-    // --------------------------------------------------------
-
-    weights.lm_head =
-        weights.embed_tokens;
-
 
     std::printf(
         "[WEIGHTS] All weights loaded successfully.\n"
@@ -609,10 +679,14 @@ void free_weights(
         weights.final_norm = nullptr;
     }
 
+    if(weights.lm_head != nullptr)
+    {
+        CUDA_CHECK(cudaFree(
+            weights.lm_head
+        ));
 
-    // lm_head aliases embed_tokens.
-    // Do NOT cudaFree it separately.
-    weights.lm_head = nullptr;
+        weights.lm_head = nullptr;
+    }
 
 
     std::printf(

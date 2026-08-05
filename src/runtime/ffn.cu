@@ -46,7 +46,7 @@ static void dump_tensor(
         exit(EXIT_FAILURE);
     }
 
-
+/*
     for(int i = 0; i < elements; i++)
     {
         float value =
@@ -65,7 +65,7 @@ static void dump_tensor(
     printf(
         "[TEST] Dumped tensor: %s\n",
         path
-    );
+    );*/
 }
 void FeedForward::forward(
     const Tensor& input,
@@ -104,11 +104,6 @@ void FeedForward::forward(
         tokens,
         1e-5f
     );
-    dump_tensor(
-        "/tmp/cuda_ffn_norm.txt",
-        normalized.data_bf16(),
-        tokens * 2048
-    );
     // =========================================================
     // W1 / gate projection
     //
@@ -125,11 +120,7 @@ void FeedForward::forward(
         8192,
         2048
     );
-    dump_tensor(
-        "/tmp/cuda_gate.txt",
-        gate.data_bf16(),
-        tokens * 8192
-    );
+
     // =========================================================
     // W3 / up projection
     //
@@ -146,11 +137,6 @@ void FeedForward::forward(
         8192,
         2048
     );
-    dump_tensor(
-        "/tmp/cuda_up.txt",
-        up.data_bf16(),
-        tokens * 8192
-    );
     // =========================================================
     // SiLU(gate) * up
     // =========================================================
@@ -161,11 +147,6 @@ void FeedForward::forward(
         activated.data_bf16(),
         tokens,
         8192
-    );
-    dump_tensor(
-        "/tmp/cuda_activated.txt",
-        activated.data_bf16(),
-        tokens * 8192
     );
     // =========================================================
     // W2 / down projection
@@ -182,11 +163,6 @@ void FeedForward::forward(
         tokens,
         2048,
         8192
-    );
-    dump_tensor(
-        "/tmp/cuda_down_proj_output.txt",
-        output.data_bf16(),
-        tokens * 2048
     );
 }
 

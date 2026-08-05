@@ -142,7 +142,8 @@ void bf16_tensorcore_gemm_2048x128256(
             cp_async_b16(
                 &Bs[0][r][c],
                 &B[
-                    (cta_col_start + c) * K + r
+                    r * N +
+                    cta_col_start + c
                 ]
             );
         }
@@ -215,8 +216,9 @@ void bf16_tensorcore_gemm_2048x128256(
                 cp_async_b16(
                     &Bs[next_stage][r][c],
                     &B[
-                        (cta_col_start + c) * K
-                        + (k + WMMA_K + r)
+                        (k + WMMA_K + r) * N
+                        +
+                        cta_col_start + c
                     ]
                 );
             }

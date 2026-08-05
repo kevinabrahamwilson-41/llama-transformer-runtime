@@ -52,17 +52,14 @@ do {                                                          \
 void launch_rope_qkv(
     const __nv_bfloat16* q_in,
     __nv_bfloat16* q_out,
-
     const __nv_bfloat16* k_in,
     __nv_bfloat16* k_out,
-
     const __nv_bfloat16* v_in,
     __nv_bfloat16* v_out,
-
     float* cos_table,
     float* sin_table,
-
-    int tokens
+    int tokens,
+    int position_offset
 );
 
 

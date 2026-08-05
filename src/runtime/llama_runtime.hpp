@@ -1,25 +1,62 @@
 #pragma once
-#include "tensor.hpp"
+#include <memory>
+#include <string>
+#include <vector>
 #include "transformer.hpp"
+#include "tensor.hpp"
 #include "weights.hpp"
-#include <cuda_runtime.h>
-namespace runtime{
-class LlamaRuntime{
+#include "../../models/tokenizer/tokenizer.hpp"
+namespace runtime
+{
+class LlamaRuntime
+{
 public:
     LlamaRuntime(
-        const llama::LlamaWeights& weights,
-        float* cos_table,
-        float* sin_table
+        const std::string& weight_path,
+        const std::string& tokenizer_path
     );
-    void forward(
-        const Tensor& input,
-        Tensor& logits
-    ) const;
+    LlamaRuntime();
+    std::string generate(
+        const std::string& prompt,
+        int max_new_tokens = 128,
+        bool use_topk = false,
+        int k = 50
+    );
 private:
-    Transformer transformer_;
-    Tensor final_norm_weight_;
-    Tensor lm_head_weight_;
-    int hidden_dim_;
-    int vocab_size_;
+    void initialize();
+    void build_rope_tables();
+    int forward_next_token(
+        int token_id,
+        int position
+    );
+private:
+    // -------------------------------
+    // Tokenizer
+    // -------------------------------
+    std::unique_ptr<transformer::tokenizer::Tokenizer> tokenizer_;
+    // -------------------------------
+    // Model weights
+    // -------------------------------
+    llama::LlamaWeights weights_;
+    // -------------------------------
+    // Transformer
+    // -------------------------------
+    std::unique_ptr<Transformer> transformer_;
+    // -------------------------------
+    // RoPE lookup tables
+    // -------------------------------
+    float* cos_table_ = nullptr;
+    float* sin_table_ = nullptr;
+    // -------------------------------
+    // Runtime tensors
+    // -------------------------------
+    Tensor hidden_states_;
+    Tensor logits_;
+    Tensor transformer_output_;
+    int* token_buffer_ = nullptr;
+    // -------------------------------
+    // Configuration
+    // -------------------------------
+    int max_sequence_length_ = 4096;
 };
-}
+} // namespace runtime

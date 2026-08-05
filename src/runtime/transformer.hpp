@@ -13,11 +13,13 @@ namespace runtime{
             Transformer(
                 llama::LlamaWeights& weights,
                 float* cos_table,
-                float* sin_table
+                float* sin_table,
+                int max_seq_len
             );
             void forward(
                 const Tensor& input,
-                Tensor& output
-            ) const;
+                Tensor& output,
+                int position
+            );
     };
 }

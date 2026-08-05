@@ -9,7 +9,8 @@
 //   FlashAttentionParams params = {};
 //   params.Q = d_Q;  params.K = d_K;  params.V = d_V;  params.O = d_O;
 //   params.batch_size = B;  params.num_heads = H;
-//   params.seq_len = S;     params.d_head = 64;
+//   params.q_seq_len = Q_len;
+//   params.kv_seq_len = KV_len;
 //   params.scale = 1.0f / sqrtf(64.0f);
 //   params.causal = true;
 //   params.stream = 0;
@@ -61,7 +62,8 @@ struct FlashAttentionParams {
   int num_kv_heads; // KV heads for GQA/MQA; 0 (or == num_heads) means MHA.
                     // K/V are [B, num_kv_heads, S, D]; num_heads % num_kv_heads
                     // == 0.
-  int seq_len;
+  int q_seq_len;     // Q sequence length
+  int kv_seq_len;    // KV cache sequence length
   int d_head;  // 64 or 128
   float scale; // Typically 1.0f / sqrtf(d_head)
   bool causal; // true = causal mask (upper triangle masked)

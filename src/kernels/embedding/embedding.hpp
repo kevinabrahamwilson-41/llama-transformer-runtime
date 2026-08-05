@@ -41,9 +41,10 @@ do {                                                                  \
 // ======================================================
 
 void launch_embedding(
-    const int* __restrict__ tokens,
-    const __nv_bfloat16* __restrict__ embedding_table,
-    __nv_bfloat16* __restrict__ output,
+    const int* d_tokens,
+    const __nv_bfloat16* d_embedding_table,
+    __nv_bfloat16* d_output,
+    int seq_len,
     cudaStream_t stream = 0
 );
 #endif // LLAMA32_EMBEDDING_HPP

@@ -57,9 +57,9 @@ struct LlamaWeights
 
     // [HIDDEN_SIZE]
     __nv_bfloat16* final_norm = nullptr;
-
-    // Llama uses tied embeddings.
-    // lm_head == embed_tokens
+    // lm_head for final projection
+    // Stored as [HIDDEN_SIZE, VOCAB_SIZE]
+    // for GEMM: [1,HIDDEN] x [HIDDEN,VOCAB]
     __nv_bfloat16* lm_head = nullptr;
 };
 

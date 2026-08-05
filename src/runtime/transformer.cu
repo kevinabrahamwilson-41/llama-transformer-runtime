@@ -5,7 +5,8 @@ namespace runtime
 Transformer::Transformer(
     llama::LlamaWeights& weights,
     float* cos_table,
-    float* sin_table
+    float* sin_table,
+    int max_seq_len
 ){
     layers_.reserve(NUM_LAYERS);
     for(int i = 0; i < NUM_LAYERS; i++){
@@ -16,7 +17,8 @@ Transformer::Transformer(
             weights.layers[i].v_proj,
             weights.layers[i].o_proj,
             cos_table,
-            sin_table
+            sin_table,
+            max_seq_len
         );
         FeedForward ffn(
             weights.layers[i].post_attention_layernorm,
@@ -25,16 +27,17 @@ Transformer::Transformer(
             weights.layers[i].down_proj
         );
         layers_.emplace_back(
-            attention,
-            ffn
+            std::move(attention),
+            std::move(ffn)
         );
     }
 }
 
 void Transformer::forward(
     const Tensor& input,
-    Tensor& output
-) const
+    Tensor& output,
+    int position
+)
 {
     const int tokens =
         static_cast<int>(
@@ -55,7 +58,8 @@ void Transformer::forward(
     for(int i = 0; i < NUM_LAYERS; i++){
         layers_[i].forward(
             *current,
-            *next
+            *next,
+            position
         );
         current = next;
         if(next == &buffer_a)

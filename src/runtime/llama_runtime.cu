@@ -143,6 +143,28 @@ namespace runtime{
             seq_len
         );
     }
+    
+    static void print_first32(
+        const char* name,
+        const __nv_bfloat16* device_ptr,
+        int elements
+    ){
+        int n = (elements < 10) ? elements : 10;
+        std::vector<__nv_bfloat16> host(n);
+        cudaMemcpy(
+            host.data(),
+            device_ptr,
+            n * sizeof(__nv_bfloat16),
+            cudaMemcpyDeviceToHost
+        );
+        printf("\n==============================\n");
+        printf("%s\n", name);
+        printf("==============================\n");
+        for (int i = 0; i < n; i++){
+            printf("%.9f\n", __bfloat162float(host[i]));
+        }
+    }
+    
     std::string LlamaRuntime::generate(
         const std::string& prompt,
         int max_new_tokens,
@@ -164,22 +186,16 @@ namespace runtime{
         // ==================================================
         // 2. Prefill
         // ==================================================
-        int position = 0;
-        int next_token = 0;
-        for(auto token_id : tokens){
-            next_token =
-                forward_next_token(
-                    token_id,
-                    position
-                );
-            position++;
-        }
+        int next_token =
+            forward_prefill(tokens);
+        // All prompt tokens are now already in the KV cache.
+        int position = tokens.size();
         // ==================================================
         // 3. Generate new tokens
         // ==================================================
         for(int i = 0; i < max_new_tokens; i++){
             int token =
-                forward_next_token(
+                decode_forward(
                     next_token,
                     position
                 );
@@ -237,7 +253,7 @@ namespace runtime{
 
         fclose(file);
     }
-    int LlamaRuntime::forward_next_token(int token_id,int position){
+    int LlamaRuntime::decode_forward(int token_id,int position){
                 // ==================================================
         // 1. Copy token id to GPU
         // ==================================================
@@ -262,8 +278,6 @@ namespace runtime{
             hidden_states_.data_bf16(),
             1
         );
-
-
         // ==================================================
         // 3. Transformer forward
         //
@@ -275,22 +289,12 @@ namespace runtime{
         transformer_->forward(
             hidden_states_,
             transformer_output_,
-            position
-        );
-        dump_tensor(
-            "/tmp/before_norm_full.txt",
-            transformer_output_.data_bf16(),
-            2048
+            position,
+            1
         );
         // ==================================================
         // 4. Final RMSNorm
         // ==================================================
-        // BEFORE RMSNorm
-        dump_tensor(
-            "/tmp/cuda_before_final_norm.txt",
-            transformer_output_.data_bf16(),
-            llama::HIDDEN_SIZE
-        );
         rmsnorm_launch<llama::HIDDEN_SIZE>(
             transformer_output_.data_bf16(),
             weights_.final_norm,
@@ -299,11 +303,6 @@ namespace runtime{
             1e-5f
         );
         cudaDeviceSynchronize();
-        dump_tensor(
-            "/tmp/cuda_final_norm.txt",
-            hidden_states_.data_bf16(),
-            llama::HIDDEN_SIZE
-        );
         // ==================================================
         // 5. LM Head
         //
@@ -363,6 +362,123 @@ namespace runtime{
             0
         );
         cudaDeviceSynchronize();
+        return next_token;
+    }
+    int LlamaRuntime::forward_prefill(
+        const transformer::tokenizer::TokenSequence& tokens
+    )
+    {
+        int seq_len = tokens.size();
+
+        // 1. Allocate GPU token buffer
+        int* prompt_tokens_gpu;
+
+        cudaMalloc(
+            &prompt_tokens_gpu,
+            seq_len * sizeof(int)
+        );
+
+        cudaMemcpy(
+            prompt_tokens_gpu,
+            tokens.data(),
+            seq_len * sizeof(int),
+            cudaMemcpyHostToDevice
+        );
+
+
+        // 2. Embedding
+        //
+        // output:
+        // [seq_len, 2048]
+        //
+        launch_embedding(
+            prompt_tokens_gpu,
+            weights_.embed_tokens,
+            hidden_states_.data_bf16(),
+            seq_len
+        );
+
+
+        cudaDeviceSynchronize();
+
+
+        // 3. Transformer PREFILL
+        //
+        // Q length = seq_len
+        // KV length = seq_len
+        printf("Runtime PREFILL seq_len=%d\n", seq_len);
+        transformer_->forward(
+            hidden_states_,
+            transformer_output_,
+            0,          // starting position
+            seq_len     // NEW ARG
+        );
+
+
+        cudaDeviceSynchronize();
+
+
+        // 4. Take only LAST token hidden state
+        //
+        // transformer_output:
+        // [seq_len,2048]
+        //
+        // Need:
+        // [1,2048]
+        //
+
+        cudaMemcpy(
+            hidden_states_.data_bf16(),
+            transformer_output_.data_bf16()
+                + (seq_len-1)*llama::HIDDEN_SIZE,
+            llama::HIDDEN_SIZE*sizeof(__nv_bfloat16),
+            cudaMemcpyDeviceToDevice
+        );
+
+
+        // 5. Final RMSNorm
+
+        rmsnorm_launch<llama::HIDDEN_SIZE>(
+            hidden_states_.data_bf16(),
+            weights_.final_norm,
+            hidden_states_.data_bf16(),
+            1,
+            1e-5f
+        );
+
+
+        // 6. LM head
+
+        launch_gemm_2048x128256(
+            hidden_states_.data_bf16(),
+            weights_.lm_head,
+            logits_.data_bf16(),
+            1,
+            llama::VOCAB_SIZE,
+            llama::HIDDEN_SIZE
+        );
+
+
+        cudaDeviceSynchronize();
+
+
+        // 7. Argmax
+
+        int next_token;
+
+        launch_argmax(
+            logits_.data_bf16(),
+            &next_token,
+            0
+        );
+
+
+        cudaDeviceSynchronize();
+
+
+        cudaFree(prompt_tokens_gpu);
+
+
         return next_token;
     }
 LlamaRuntime::LlamaRuntime(

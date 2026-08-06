@@ -519,9 +519,17 @@ void load_weights(
             NUM_LAYERS
         );
 
-
         // ----------------------------------------------------
-        // EXACT CONVERTER ORDER
+        // LAYER ORDER:
+        // input_layernorm
+        // q_proj
+        // k_proj
+        // v_proj
+        // o_proj
+        // post_attention_layernorm
+        // gate_proj
+        // up_proj
+        // down_proj
         // ----------------------------------------------------
 
         load_tensor(
@@ -531,78 +539,6 @@ void load_weights(
             host_buffer
         );
 
-
-        load_tensor_transposed(
-            file,
-            w.down_proj,
-            HIDDEN_SIZE,
-            INTERMEDIATE_SIZE,
-            host_buffer
-        );
-
-
-    load_tensor_transposed(
-        file,
-        w.gate_proj,
-        INTERMEDIATE_SIZE,
-        HIDDEN_SIZE,
-        host_buffer
-    );
-
-
-    load_tensor_transposed(
-        file,
-        w.up_proj,
-        INTERMEDIATE_SIZE,
-        HIDDEN_SIZE,
-        host_buffer
-    );
-
-
-        load_tensor(
-            file,
-            w.post_attention_layernorm,
-            NORM_ELEMENTS,
-            host_buffer
-        );
-        load_tensor_transposed(
-            file,
-            w.k_proj,
-            NUM_KV_HEADS * HEAD_DIM,
-            HIDDEN_SIZE,
-            host_buffer
-        );
-        // ----------------------------------------------------
-        // O PROJECTION (STORE TRANSPOSED)
-        // ----------------------------------------------------
-        load_tensor_transposed(
-            file,
-            w.o_proj,
-            HIDDEN_SIZE,
-            HIDDEN_SIZE,
-            host_buffer
-        );
-
-
-        // DEBUG ONLY
-        std::vector<__nv_bfloat16> check(10);
-
-        CUDA_CHECK(cudaMemcpy(
-            check.data(),
-            w.o_proj,
-            sizeof(__nv_bfloat16) * 10,
-            cudaMemcpyDeviceToHost
-        ));
-
-        //std::printf("O TRANSPOSED FIRST:\n");
-//
-  //      for(int i = 0; i < 10; i++)
-    //    {
-      //      std::printf(
-        //        "%f\n",
-          //      __bfloat162float(check[i])
-        //    );
-       // }
         load_tensor_transposed(
             file,
             w.q_proj,
@@ -610,11 +546,59 @@ void load_weights(
             HIDDEN_SIZE,
             host_buffer
         );
+
+        load_tensor_transposed(
+            file,
+            w.k_proj,
+            NUM_KV_HEADS * HEAD_DIM,
+            HIDDEN_SIZE,
+            host_buffer
+        );
+
         load_tensor_transposed(
             file,
             w.v_proj,
             NUM_KV_HEADS * HEAD_DIM,
             HIDDEN_SIZE,
+            host_buffer
+        );
+
+        load_tensor_transposed(
+            file,
+            w.o_proj,
+            HIDDEN_SIZE,
+            HIDDEN_SIZE,
+            host_buffer
+        );
+
+        load_tensor(
+            file,
+            w.post_attention_layernorm,
+            NORM_ELEMENTS,
+            host_buffer
+        );
+
+        load_tensor_transposed(
+            file,
+            w.gate_proj,
+            INTERMEDIATE_SIZE,
+            HIDDEN_SIZE,
+            host_buffer
+        );
+
+        load_tensor_transposed(
+            file,
+            w.up_proj,
+            INTERMEDIATE_SIZE,
+            HIDDEN_SIZE,
+            host_buffer
+        );
+
+        load_tensor_transposed(
+            file,
+            w.down_proj,
+            HIDDEN_SIZE,
+            INTERMEDIATE_SIZE,
             host_buffer
         );
     }

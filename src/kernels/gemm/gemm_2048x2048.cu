@@ -14,9 +14,7 @@ gemm_2048x2048	2048×2048	32×64
 #include <chrono>
 #include <random>
 #include <cmath>
-
 using namespace nvcuda;
-
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
@@ -155,7 +153,7 @@ void bf16_tensorcore_gemm_2048x2048(
             int c = offset % CTA_N;
             cp_async_b16(
                 &Bs[0][r][c],
-                &B[r*N + cta_col_start+c]
+                &B[r * N + (cta_col_start + c)]
             );
         }
         cp_async_commit();
@@ -224,11 +222,21 @@ void bf16_tensorcore_gemm_2048x2048(
                 int offset = idx * COPY_ELEMS;
                 int r = offset / CTA_N;
                 int c = offset % CTA_N;
-                cp_async_b16(
-                    &Bs[next_stage][r][c],
-                    &B[(k+WMMA_K+r)*N +
-                    (cta_col_start+c)]
-                );
+                if(
+                    cta_col_start + c + COPY_ELEMS <= N &&
+                    k + WMMA_K + r < K
+                ){
+                    cp_async_b16(
+                        &Bs[next_stage][r][c],
+                        &B[(k + WMMA_K + r)*N + cta_col_start+c]
+                    );
+                }
+                else{
+                    for(int i=0;i<COPY_ELEMS;i++){
+                        Bs[next_stage][r][c+i] =
+                            __float2bfloat16(0.0f);
+                    }
+                }
             }
             cp_async_commit();
         }
@@ -280,7 +288,6 @@ void bf16_tensorcore_gemm_2048x2048(
         }
     }
 }
-
 void launch_gemm_2048x2048(
     const __nv_bfloat16* A,
     const __nv_bfloat16* B,

@@ -25,7 +25,7 @@ public:
 private:
     void initialize();
     void build_rope_tables();
-    int forward_next_token(
+    int decode_forward(
         int token_id,
         int position
     );
@@ -58,5 +58,8 @@ private:
     // Configuration
     // -------------------------------
     int max_sequence_length_ = 4096;
+        int forward_prefill(
+        const transformer::tokenizer::TokenSequence& tokens
+    );
 };
 } // namespace runtime

@@ -15,11 +15,10 @@ int main()
         TOKENIZER
     );
 
-    std::vector<std::string> prompts =
-    {
-
-        "What is 2 + 2?",
-    };
+std::vector<std::string> prompts =
+{
+    "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome."
+};
 
     for (const auto& prompt : prompts)
     {

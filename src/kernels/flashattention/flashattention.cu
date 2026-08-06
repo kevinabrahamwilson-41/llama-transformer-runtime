@@ -112,6 +112,16 @@ __global__ void flash_attention_fat_kernel(
   const int q_offset = kv_seq_len - q_seq_len;
   const int warp_id = threadIdx.y;
   const int lane_id = threadIdx.x;
+     // ADD HERE
+    if (threadIdx.x == 0 && threadIdx.y == 0)
+    {
+        printf(
+            "FlashAttention bh=%d q_seq=%d kv_seq=%d\n",
+            bh_idx,
+            q_seq_len,
+            kv_seq_len
+        );
+    }
   constexpr int THREADS = WARP_SIZE_FA * NUM_WARPS;
   if (q_start >= q_seq_len)
     return;

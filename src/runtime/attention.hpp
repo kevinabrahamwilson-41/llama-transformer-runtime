@@ -24,7 +24,8 @@ public:
     void forward(
         const Tensor& input,
         Tensor& output,
-        int position
+        int position,
+        int seq_len
     );
 
 private:

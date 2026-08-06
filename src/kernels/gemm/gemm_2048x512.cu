@@ -146,7 +146,7 @@ void bf16_tensorcore_gemm_2048x512(
         for(int i = 0; i < COPY_ELEMS; i++)
         {
             Bs[0][r][c+i] =
-                B[(cta_col_start+c+i)*K + r];
+                B[r*N + (cta_col_start+c+i)];
         }
     }
         __syncthreads();
@@ -221,8 +221,8 @@ void bf16_tensorcore_gemm_2048x512(
                 {
                     Bs[next_stage][r][c+i] =
                         B[
-                            (cta_col_start+c+i) * K +
-                            (k + WMMA_K + r)
+                            (k + WMMA_K + r) * N +
+                            (cta_col_start+c+i)
                         ];
                 }
             }

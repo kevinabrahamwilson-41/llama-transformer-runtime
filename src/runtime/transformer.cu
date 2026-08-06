@@ -1,5 +1,6 @@
 #include "transformer.hpp"
 #include <utility>
+#include <cstdio>
 namespace runtime
 {
 Transformer::Transformer(
@@ -36,9 +37,10 @@ Transformer::Transformer(
 void Transformer::forward(
     const Tensor& input,
     Tensor& output,
-    int position
+    int position,
+    int seq_len
 )
-{
+{   printf("Transformer seq_len=%d\n", seq_len);
     const int tokens =
         static_cast<int>(
             input.shape()[0]
@@ -59,7 +61,8 @@ void Transformer::forward(
         layers_[i].forward(
             *current,
             *next,
-            position
+            position,
+            seq_len
         );
         current = next;
         if(next == &buffer_a)

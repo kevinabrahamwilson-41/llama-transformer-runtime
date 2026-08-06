@@ -116,7 +116,8 @@ TransformerBlock::TransformerBlock(
 void TransformerBlock::forward(
     const Tensor& input,
     Tensor& output,
-    int position 
+    int position,
+    int seq_len
 ) 
 {
     const int tokens =
@@ -146,7 +147,8 @@ void TransformerBlock::forward(
     attention_.forward(
         input,
         attention_output,
-        position
+        position,
+        seq_len
     );
     cudaDeviceSynchronize();
 

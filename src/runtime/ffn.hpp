@@ -16,7 +16,8 @@ public:
     );
     void forward(
         const Tensor& input,
-        Tensor& output
+        Tensor& output,
+        int seq_len
     ) const;
 
 private:

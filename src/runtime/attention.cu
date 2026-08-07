@@ -105,22 +105,7 @@ void Attention::forward(
     int seq_len
 )
 {
-    int tokens =
-        static_cast<int>(
-            input.shape()[0]
-        );
-    /*    
-    printf(
-        "Attention: tokens=%d position=%d\n",
-        tokens,
-        position
-    );
-    printf(
-        "Q shape: [32,%d,64]\nKV cache seq=%d\n",
-        tokens,
-        position+1
-    );
-    */
+    int tokens = seq_len;
     // =========================================================
     // 1. RMSNorm
     //
@@ -128,7 +113,6 @@ void Attention::forward(
     //        ↓
     // [tokens, 2048]
     // =========================================================
-
     Tensor normalized(
         {tokens, 2048},
         DataType::BF16
@@ -201,12 +185,6 @@ void Attention::forward(
         512,
         2048
     );
-    cudaDeviceSynchronize();
-    print_first32(
-        "CUDA V OUTPUT",
-        v.data_bf16(),
-        32
-    );
     // =========================================================
     // 5. RoPE + layout conversion
     //
@@ -253,7 +231,7 @@ void Attention::forward(
         position
     );
     cudaDeviceSynchronize();
-        for(int h = 0; h < 8; h++){
+    for(int h = 0; h < 8; h++){
         for(int t = 0; t < tokens; t++){
             cudaMemcpy(
                 key_cache_.data_bf16()
@@ -317,7 +295,6 @@ void Attention::forward(
 
         flash_params.num_kv_heads =
             8;
-
         flash_params.q_seq_len =
             tokens;
         bool prefill = (tokens > 1);
@@ -342,30 +319,12 @@ void Attention::forward(
 
         flash_params.stream =
             0;
-// =========================================================
-// DEBUG: Q AFTER LAYOUT CONVERSION
-// BEFORE FLASH ATTENTION
-// =========================================================
+    // =========================================================
+    // DEBUG: Q AFTER LAYOUT CONVERSION
+    // BEFORE FLASH ATTENTION
+    // =========================================================
 
-cudaDeviceSynchronize();
-
-std::vector<__nv_bfloat16> q_debug(32 * tokens * 64);
-
-cudaMemcpy(
-    q_debug.data(),
-    q_flash.data_bf16(),
-    q_debug.size()*sizeof(__nv_bfloat16),
-    cudaMemcpyDeviceToHost
-);
-for(int h=0; h<4; h++)
-{
-    printf("Q HEAD %d: ",h);
-
-    for(int i=0;i<8;i++)
-        printf("%f ", __bfloat162float(q_debug[h*64+i]));
-
-    printf("\n");
-}
+    cudaDeviceSynchronize();
 
     transformer::launch_flash_attention(flash_params);
     // =========================================================
@@ -400,17 +359,6 @@ for(int h=0; h<4; h++)
     //        ↓
     // [tokens, 2048]
     // =========================================================
-    print_first32(
-        "O PROJ INPUT",
-        attention_input.data_bf16(),
-        32
-    );
-
-    print_first32(
-        "O PROJ WEIGHT",
-        o_proj_,
-        32
-    );
     launch_gemm_2048x2048(
         attention_input.data_bf16(),
         o_proj_,
@@ -420,10 +368,5 @@ for(int h=0; h<4; h++)
         2048
     );
     cudaDeviceSynchronize();
-    print_first32(
-        "O PROJ OUTPUT",
-        output.data_bf16(),
-        32
-    );
     }
 }

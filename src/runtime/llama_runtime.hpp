@@ -54,6 +54,8 @@ private:
     Tensor logits_;
     Tensor transformer_output_;
     int* token_buffer_ = nullptr;
+    Tensor final_norm_output_;
+    Tensor last_hidden_state_;
     // -------------------------------
     // Configuration
     // -------------------------------

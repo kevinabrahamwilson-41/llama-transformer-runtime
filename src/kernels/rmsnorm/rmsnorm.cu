@@ -120,7 +120,7 @@ void rmsnorm_launch(
     ) {
     int blocks = rows;
     int threads = threads_per_block;
-    size_t shared_mem = 32 * sizeof(float); // we accumulate in float internally
+    size_t shared_mem = ((threads_per_block + 31) / 32) * sizeof(float);
     rmsnorm_fwd_kernel<HIDDEN><<<blocks, threads, shared_mem, 0>>>(
         d_in,
         d_weight,

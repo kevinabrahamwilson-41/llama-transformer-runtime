@@ -216,43 +216,6 @@ namespace runtime{
             generated_tokens
         );
     }
-
-    void dump_tensor(
-        const char* path,
-        const __nv_bfloat16* device_tensor,
-        int elements
-    )
-    {
-        std::vector<__nv_bfloat16> host(elements);
-
-        cudaMemcpy(
-            host.data(),
-            device_tensor,
-            elements * sizeof(__nv_bfloat16),
-            cudaMemcpyDeviceToHost
-        );
-
-
-        FILE* file = fopen(path, "w");
-
-        if(!file)
-        {
-            printf("Failed to open dump file\n");
-            exit(EXIT_FAILURE);
-        }
-
-
-        for(int i = 0; i < elements; i++)
-        {
-            fprintf(
-                file,
-                "%.9g\n",
-                __bfloat162float(host[i])
-            );
-        }
-
-        fclose(file);
-    }
     int LlamaRuntime::decode_forward(int token_id,int position){
                 // ==================================================
         // 1. Copy token id to GPU
@@ -298,7 +261,7 @@ namespace runtime{
         rmsnorm_launch<llama::HIDDEN_SIZE>(
             transformer_output_.data_bf16(),
             weights_.final_norm,
-            hidden_states_.data_bf16(),
+            final_norm_output_.data_bf16(),
             1,
             1e-5f
         );
@@ -313,47 +276,139 @@ namespace runtime{
         // = logits
         // ==================================================
         launch_gemm_2048x128256(
-            hidden_states_.data_bf16(),
+            final_norm_output_.data_bf16(),
             weights_.lm_head,
             logits_.data_bf16(),
             1,                  // M
             llama::VOCAB_SIZE,  // N
             llama::HIDDEN_SIZE  // K
         );
-        // ==================================================
-        // DEBUG LM HEAD OUTPUT
-        // ==================================================
-
-        cudaDeviceSynchronize();
-
-        std::vector<__nv_bfloat16> h_logits(
-            llama::VOCAB_SIZE
-        );
-
-        cudaMemcpy(
-            h_logits.data(),
+        // Argmax kernel
+        int next_token = 0;
+        launch_argmax(
             logits_.data_bf16(),
-            llama::VOCAB_SIZE * sizeof(__nv_bfloat16),
-            cudaMemcpyDeviceToHost
+            &next_token,
+            0
         );
-
-
-        float max_val = -1e9f;
-        int max_idx = -1;
-
-
-        for(int i = 0; i < llama::VOCAB_SIZE; i++)
-        {
-            float v = __bfloat162float(h_logits[i]);
-
-            if(v > max_val)
-            {
-                max_val = v;
-                max_idx = i;
-            }
-        }
+        cudaDeviceSynchronize();
+        printf(
+            "GPU ARGMAX TOKEN = %d\n",
+            next_token
+        );
+        return next_token;
+    }
+    int LlamaRuntime::forward_prefill(
+        const transformer::tokenizer::TokenSequence& tokens
+    ){
+        int seq_len = tokens.size();
         // ==================================================
-        // 6. Argmax sampling
+        // 1. Copy prompt tokens to GPU
+        // ==================================================
+        int* prompt_tokens_gpu;
+        cudaMalloc(
+            &prompt_tokens_gpu,
+            seq_len * sizeof(int)
+        );
+        cudaMemcpy(
+            prompt_tokens_gpu,
+            tokens.data(),
+            seq_len * sizeof(int),
+            cudaMemcpyHostToDevice
+        );
+        // ==================================================
+        // 2. Embedding
+        //
+        // tokens
+        //    |
+        //    v
+        // hidden_states [seq_len,2048]
+        // ==================================================
+        launch_embedding(
+            prompt_tokens_gpu,
+            weights_.embed_tokens,
+            hidden_states_.data_bf16(),
+            seq_len
+        );
+        cudaDeviceSynchronize();
+        // ==================================================
+        // 3. Transformer PREFILL
+        // IMPORTANT:
+        // This is what fills KV cache.
+        // position = 0
+        // seq_len  = prompt length
+        // Example:
+        // 22 prompt tokens:
+        // Q = [32,22,64]
+        // K = [8,22,64]
+        // V = [8,22,64]
+        // cache positions:
+        // 0 ... 21
+        // ==================================================
+
+        transformer_->forward(
+            hidden_states_,
+            transformer_output_,
+            0,
+            seq_len
+        );
+        cudaDeviceSynchronize();
+        // ==================================================
+        // DEBUG
+        // ==================================================
+        printf("\n==============================\n");
+        printf("PREFILL TRANSFORMER COMPLETE\n");
+        printf("seq_len=%d\n", seq_len);
+        printf("==============================\n");
+        // ==================================================
+        // 4. Extract LAST TOKEN hidden state
+        // transformer_output:
+        // [seq_len,2048]
+        // We only need:
+        // [last token,2048]
+        // ==================================================
+        cudaMemcpy(
+            last_hidden_state_.data_bf16(),
+            transformer_output_.data_bf16()
+            + (seq_len - 1) * llama::HIDDEN_SIZE,
+            llama::HIDDEN_SIZE * sizeof(__nv_bfloat16),
+            cudaMemcpyDeviceToDevice
+        );
+        cudaDeviceSynchronize();
+        // ==================================================
+        // 5. Final RMSNorm
+        // [1,2048]
+        //       |
+        //       v
+        // [1,2048]
+        // ==================================================
+        rmsnorm_launch<llama::HIDDEN_SIZE>(
+            last_hidden_state_.data_bf16(),
+            weights_.final_norm,
+            final_norm_output_.data_bf16(),
+            1,
+            1e-5f
+        );
+        cudaDeviceSynchronize();
+        // ==================================================
+        // 6. LM Head
+        // [1,2048]
+        //      x
+        // [2048,128256]
+        //      |
+        //      v
+        // logits [1,128256]
+        // ==================================================
+        launch_gemm_2048x128256(
+            final_norm_output_.data_bf16(),
+            weights_.lm_head,
+            logits_.data_bf16(),
+            1,
+            llama::VOCAB_SIZE,
+            llama::HIDDEN_SIZE
+        );
+        cudaDeviceSynchronize();
+        // ==================================================
+        // 7. Argmax
         // ==================================================
         int next_token = 0;
         launch_argmax(
@@ -362,125 +417,13 @@ namespace runtime{
             0
         );
         cudaDeviceSynchronize();
-        return next_token;
-    }
-    int LlamaRuntime::forward_prefill(
-        const transformer::tokenizer::TokenSequence& tokens
-    )
-    {
-        int seq_len = tokens.size();
-
-        // 1. Allocate GPU token buffer
-        int* prompt_tokens_gpu;
-
-        cudaMalloc(
-            &prompt_tokens_gpu,
-            seq_len * sizeof(int)
-        );
-
-        cudaMemcpy(
-            prompt_tokens_gpu,
-            tokens.data(),
-            seq_len * sizeof(int),
-            cudaMemcpyHostToDevice
-        );
-
-
-        // 2. Embedding
-        //
-        // output:
-        // [seq_len, 2048]
-        //
-        launch_embedding(
-            prompt_tokens_gpu,
-            weights_.embed_tokens,
-            hidden_states_.data_bf16(),
-            seq_len
-        );
-
-
-        cudaDeviceSynchronize();
-
-
-        // 3. Transformer PREFILL
-        //
-        // Q length = seq_len
-        // KV length = seq_len
-        printf("Runtime PREFILL seq_len=%d\n", seq_len);
-        transformer_->forward(
-            hidden_states_,
-            transformer_output_,
-            0,          // starting position
-            seq_len     // NEW ARG
-        );
-
-
-        cudaDeviceSynchronize();
-
-
-        // 4. Take only LAST token hidden state
-        //
-        // transformer_output:
-        // [seq_len,2048]
-        //
-        // Need:
-        // [1,2048]
-        //
-
-        cudaMemcpy(
-            hidden_states_.data_bf16(),
-            transformer_output_.data_bf16()
-                + (seq_len-1)*llama::HIDDEN_SIZE,
-            llama::HIDDEN_SIZE*sizeof(__nv_bfloat16),
-            cudaMemcpyDeviceToDevice
-        );
-
-
-        // 5. Final RMSNorm
-
-        rmsnorm_launch<llama::HIDDEN_SIZE>(
-            hidden_states_.data_bf16(),
-            weights_.final_norm,
-            hidden_states_.data_bf16(),
-            1,
-            1e-5f
-        );
-
-
-        // 6. LM head
-
-        launch_gemm_2048x128256(
-            hidden_states_.data_bf16(),
-            weights_.lm_head,
-            logits_.data_bf16(),
-            1,
-            llama::VOCAB_SIZE,
-            llama::HIDDEN_SIZE
-        );
-
-
-        cudaDeviceSynchronize();
-
-
-        // 7. Argmax
-
-        int next_token;
-
-        launch_argmax(
-            logits_.data_bf16(),
-            &next_token,
-            0
-        );
-
-
-        cudaDeviceSynchronize();
-
-
+        // ==================================================
+        // Cleanup
+        // ==================================================
         cudaFree(prompt_tokens_gpu);
-
-
         return next_token;
     }
+
 LlamaRuntime::LlamaRuntime(
     const std::string& weight_path,
     const std::string& tokenizer_path
@@ -537,17 +480,24 @@ void LlamaRuntime::initialize(){
     // Allocate hidden state buffer
     // ==========================================
     hidden_states_.allocate({
-        1,
+        max_sequence_length_,
         llama::HIDDEN_SIZE
-    },
-    DataType::BF16
-    );
+    }, DataType::BF16);
+
     transformer_output_.allocate({
+        max_sequence_length_,
+        llama::HIDDEN_SIZE
+    }, DataType::BF16);
+    final_norm_output_.allocate({
+        1,
+        llama::HIDDEN_SIZE
+    }, DataType::BF16);
+    
+    last_hidden_state_.allocate({
         1,
         llama::HIDDEN_SIZE
     },
-    DataType::BF16
-    );
+    DataType::BF16);
     // ==========================================
     // Allocate LM head output buffer
     // ==========================================

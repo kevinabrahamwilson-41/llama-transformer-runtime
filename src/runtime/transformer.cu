@@ -41,10 +41,7 @@ void Transformer::forward(
     int seq_len
 )
 {   printf("Transformer seq_len=%d\n", seq_len);
-    const int tokens =
-        static_cast<int>(
-            input.shape()[0]
-        );
+    const int tokens = seq_len;
     Tensor buffer_a(
         {tokens, HIDDEN_SIZE},
         DataType::BF16
@@ -77,7 +74,7 @@ void Transformer::forward(
     cudaMemcpy(
         output.data_bf16(),
         current->data_bf16(),
-        input.numel() * sizeof(__nv_bfloat16),
+        current->numel() * sizeof(__nv_bfloat16),
         cudaMemcpyDeviceToDevice
     );
 }

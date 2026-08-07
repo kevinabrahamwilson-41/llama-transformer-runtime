@@ -69,9 +69,10 @@ static void dump_tensor(
 }
 void FeedForward::forward(
     const Tensor& input,
-    Tensor& output
+    Tensor& output,
+    int seq_len
 ) const
-{   int tokens = input.shape()[0];
+{   int tokens = seq_len;
     // =========================================================
     // Temporary tensors
     // =========================================================

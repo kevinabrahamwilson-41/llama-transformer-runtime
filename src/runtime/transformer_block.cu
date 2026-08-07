@@ -7,103 +7,7 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
-namespace runtime
-{
-
-static void debug_check_tensor(
-    const char* name,
-    const Tensor& tensor,
-    int tokens
-)
-{
-    const int elements = tokens * 2048;
-
-    std::vector<__nv_bfloat16> host(
-        elements
-    );
-
-    cudaMemcpy(
-        host.data(),
-        tensor.data_bf16(),
-        elements * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-/*
-    float max_abs = 0.0f;
-    int max_idx = 0;
-
-    for (int i = 0; i < elements; ++i)
-    {
-        float value =
-            __bfloat162float(host[i]);
-
-        if (fabsf(value) > max_abs)
-        {
-            max_abs = fabsf(value);
-            max_idx = i;
-        }
-    }*/
-/*
-    printf(
-        "%s max_abs = %.6f at index %d\n",
-        name,
-        max_abs,
-        max_idx
-    );*/
-}
-
-static void dump_tensor(
-    const char* path,
-    const Tensor& tensor,
-    int tokens
-)
-{
-    const int elements = tokens * 2048;
-
-    std::vector<__nv_bfloat16> host(elements);
-
-    cudaMemcpy(
-        host.data(),
-        tensor.data_bf16(),
-        elements * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-
-    FILE* file = fopen(path, "w");
-
-    if (!file)
-    {
-        printf("Failed to open dump file: %s\n", path);
-        return;
-    }
-
-    for (int i = 0; i < elements; ++i)
-    {
-        fprintf(
-            file,
-            "%.9g\n",
-            __bfloat162float(host[i])
-        );
-    }
-
-    fclose(file);
-}
-
-static float read_device_bf16(
-    const __nv_bfloat16* device_ptr
-)
-{
-    __nv_bfloat16 host_value;
-
-    cudaMemcpy(
-        &host_value,
-        device_ptr,
-        sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-
-    return __bfloat162float(host_value);
-}
+namespace runtime{
 TransformerBlock::TransformerBlock(
     Attention&& attention,
     FeedForward&& ffn
@@ -113,6 +17,26 @@ TransformerBlock::TransformerBlock(
 {
 }
 
+static void print_first32(
+    const char* name,
+    const __nv_bfloat16* device_ptr,
+    int elements
+){
+    int n = (elements < 10) ? elements : 10;
+    std::vector<__nv_bfloat16> host(n);
+    cudaMemcpy(
+        host.data(),
+        device_ptr,
+        n * sizeof(__nv_bfloat16),
+        cudaMemcpyDeviceToHost
+    );
+    printf("\n==============================\n");
+    printf("%s\n", name);
+    printf("==============================\n");
+    for (int i = 0; i < n; i++){
+        printf("%.9f\n", __bfloat162float(host[i]));
+    }
+}
 void TransformerBlock::forward(
     const Tensor& input,
     Tensor& output,
@@ -120,11 +44,7 @@ void TransformerBlock::forward(
     int seq_len
 ) 
 {
-    const int tokens =
-        static_cast<int>(
-            input.shape()[0]
-        );
-
+    const int tokens = seq_len;
     // =========================================================
     // 1. Attention
     //
@@ -149,18 +69,6 @@ void TransformerBlock::forward(
         attention_output,
         position,
         seq_len
-    );
-    cudaDeviceSynchronize();
-
-    dump_tensor(
-        "/tmp/cuda_attention_output.txt",
-        attention_output,
-        tokens
-    );
-    debug_check_tensor(
-        "ATTENTION",
-        attention_output,
-        tokens
     );
     cudaDeviceSynchronize();
     //std::cout << "ATTENTION[0] = "
@@ -189,18 +97,7 @@ void TransformerBlock::forward(
         residual.data_bf16(),
         static_cast<int64_t>(tokens) * 2048
     );
-
     cudaDeviceSynchronize();
-    dump_tensor(
-        "/tmp/cuda_residual.txt",
-        residual,
-        tokens
-    );
-    debug_check_tensor(
-        "RESIDUAL",
-        residual,
-        tokens
-    );
     //std::cout << "RESIDUAL[0] = "
       //      << read_device_bf16(
         //         residual.data_bf16()
@@ -227,20 +124,8 @@ void TransformerBlock::forward(
 
     ffn_.forward(
         residual,
-        ffn_output
-    );
-
-    cudaDeviceSynchronize();
-
-    dump_tensor(
-        "/tmp/cuda_ffn_output.txt",
         ffn_output,
-        tokens
-    );
-    debug_check_tensor(
-        "FFN",
-        ffn_output,
-        tokens
+        seq_len
     );
     cudaDeviceSynchronize();
     //std::cout << "FFN[0] = "
@@ -265,24 +150,6 @@ void TransformerBlock::forward(
         static_cast<int64_t>(tokens) * 2048
     );
     cudaDeviceSynchronize();
-
-    dump_tensor(
-        "/tmp/cuda_block0_output.txt",
-        output,
-        tokens
-    );
-
-    debug_check_tensor(
-        "OUTPUT",
-        output,
-        tokens
-    );
-    //cudaDeviceSynchronize();
-    //std::cout << "OUTPUT[0] = "
-      //      << read_device_bf16(
-        //             output.data_bf16()
-          //          )
-            //<< "\n";
 }
 
 } // namespace runtime

@@ -7,8 +7,8 @@
 #include <type_traits>
 #include <cstdint>
 #include <vector>
+#include "../../runtime/debug_dump.hpp"
 namespace transformer {
-
 static constexpr int WARP_SIZE_FA = 32;
 template <class T> __device__ __forceinline__ T to_elem(float x);
 template <> __device__ __forceinline__ half to_elem<half>(float x) {
@@ -387,7 +387,32 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
   const T *Kp = reinterpret_cast<const T *>(params.K);
   const T *Vp = reinterpret_cast<const T *>(params.V);
   T *Op = reinterpret_cast<T *>(params.O);
+  save_checkpoint(
+      "flash_q_input",
+      reinterpret_cast<const __nv_bfloat16 *>(params.Q),
+      params.batch_size *
+      params.num_heads *
+      params.q_seq_len *
+      params.d_head
+  );
 
+  save_checkpoint(
+      "flash_k_input",
+      reinterpret_cast<const __nv_bfloat16 *>(params.K),
+      params.batch_size *
+      params.num_kv_heads *
+      params.kv_seq_len *
+      params.d_head
+  );
+
+  save_checkpoint(
+      "flash_v_input",
+      reinterpret_cast<const __nv_bfloat16 *>(params.V),
+      params.batch_size *
+      params.num_kv_heads *
+      params.kv_seq_len *
+      params.d_head
+  );
   if (params.causal) {
     flash_attention_fat_kernel<BM, BN, D_HEAD, NW, true, T>
       <<<grid, block, smem_bytes, params.stream>>>(

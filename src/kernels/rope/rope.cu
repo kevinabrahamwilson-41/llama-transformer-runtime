@@ -29,56 +29,90 @@ void rope_q_kernel(
     int tokens,
     int position_offset
 ){
-    int warp_id = blockIdx.x * (blockDim.x / 32)
-                + threadIdx.x / 32;
-    int lane = threadIdx.x % 32;
-    int total_warps = tokens * HEADS;
-    if(warp_id >= total_warps)
+    int warp_id =
+        blockIdx.x * (blockDim.x / 32)
+        + threadIdx.x / 32;
+
+    int lane =
+        threadIdx.x % 32;
+
+    int total_warps =
+        tokens * HEADS;
+
+    if (warp_id >= total_warps)
         return;
-    // one warp = one token position + one head
-    int pos = warp_id / HEADS;
-    int head = warp_id % HEADS;
-    // lane handles one pair
+
+    // One warp = one token position + one Q head
+    int pos =
+        warp_id / HEADS;
+
+    int head =
+        warp_id % HEADS;
+
+    // One lane = one RoPE pair
+    // pair 0  -> dimensions 0  and 32
+    // pair 1  -> dimensions 1  and 33
+    // ...
+    // pair 31 -> dimensions 31 and 63
     int pair = lane;
+
     int input_offset =
         pos * HEADS * HEAD_DIM
         +
-        head * HEAD_DIM
-        +
-        pair * 2;
+        head * HEAD_DIM;
 
     int output_offset =
         head * tokens * HEAD_DIM
         +
-        pos * HEAD_DIM
-        +
-        pair * 2;
-    int rope_pos = pos + position_offset;
+        pos * HEAD_DIM;
+
+    int rope_pos =
+        pos + position_offset;
+
     float c =
         cos_table[
             rope_pos * ROTARY_DIM + pair
         ];
+
     float s =
         sin_table[
             rope_pos * ROTARY_DIM + pair
         ];
-    __nv_bfloat162 x =
-        *reinterpret_cast<const __nv_bfloat162*>(&q_in[input_offset]);
+
+    // Llama RoPE pairing:
+    //
+    // x0 = x[pair]
+    // x1 = x[pair + 32]
+    //
+    // NOT:
+    // x[pair*2], x[pair*2+1]
+
     float x0 =
-        __bfloat162float(x.x);
+        __bfloat162float(
+            q_in[input_offset + pair]
+        );
+
     float x1 =
-        __bfloat162float(x.y);
+        __bfloat162float(
+            q_in[input_offset + pair + ROTARY_DIM]
+        );
+
+    // Rotary transformation
     float y0 =
-        x0*c - x1*s;
+        x0 * c - x1 * s;
+
     float y1 =
-        x0*s + x1*c;
-    __nv_bfloat162 out;
-    out.x =
+        x0 * s + x1 * c;
+
+    q_out[
+        output_offset + pair
+    ] =
         __float2bfloat16(y0);
-    out.y =
+
+    q_out[
+        output_offset + pair + ROTARY_DIM
+    ] =
         __float2bfloat16(y1);
-    *reinterpret_cast<__nv_bfloat162*>(&q_out[output_offset])
-        = out;
 }
 __global__
 void rope_k_kernel(
@@ -90,58 +124,90 @@ void rope_k_kernel(
     int position_offset
 ){
     int warp_id =
-        blockIdx.x * (blockDim.x/32)
-        +
-        threadIdx.x/32;
+        blockIdx.x * (blockDim.x / 32)
+        + threadIdx.x / 32;
+
     int lane =
         threadIdx.x % 32;
+
     int total_warps =
         tokens * KV_HEADS;
-    if(warp_id >= total_warps)
+
+    if (warp_id >= total_warps)
         return;
+
+    // One warp = one token position + one KV head
     int pos =
         warp_id / KV_HEADS;
+
     int head =
         warp_id % KV_HEADS;
+
+    // One lane = one RoPE pair
+    //
+    // pair 0  -> dimensions 0  and 32
+    // pair 1  -> dimensions 1  and 33
+    // ...
+    // pair 31 -> dimensions 31 and 63
     int pair = lane;
+
     int input_offset =
         pos * KV_HEADS * HEAD_DIM
         +
-        head * HEAD_DIM
-        +
-        pair * 2;
+        head * HEAD_DIM;
 
     int output_offset =
         head * tokens * HEAD_DIM
         +
-        pos * HEAD_DIM
-        +
-        pair * 2;
-    int rope_pos = pos + position_offset;
+        pos * HEAD_DIM;
+
+    int rope_pos =
+        pos + position_offset;
+
     float c =
-        cos_table[rope_pos*ROTARY_DIM+pair];
+        cos_table[
+            rope_pos * ROTARY_DIM + pair
+        ];
+
     float s =
-        sin_table[rope_pos*ROTARY_DIM+pair];
-    __nv_bfloat162 x =
-        *reinterpret_cast<const __nv_bfloat162*>(&k_in[input_offset]);
+        sin_table[
+            rope_pos * ROTARY_DIM + pair
+        ];
+
+    // Llama RoPE:
+    //
+    // x0 = x[pair]
+    // x1 = x[pair + 32]
+    //
+    // NOT adjacent pairs (0,1), (2,3), etc.
+
     float x0 =
-        __bfloat162float(x.x);
+        __bfloat162float(
+            k_in[input_offset + pair]
+        );
+
     float x1 =
-        __bfloat162float(x.y);
+        __bfloat162float(
+            k_in[input_offset + pair + ROTARY_DIM]
+        );
+
+    // Rotary transformation
     float y0 =
-        x0*c - x1*s;
+        x0 * c - x1 * s;
 
     float y1 =
-        x0*s + x1*c;
-    __nv_bfloat162 out;
-    out.x =
-        __float2bfloat16(y0);
-    out.y =
-        __float2bfloat16(y1);
-    *reinterpret_cast<__nv_bfloat162*>(&k_out[output_offset])
-        = out;
-}
+        x0 * s + x1 * c;
 
+    k_out[
+        output_offset + pair
+    ] =
+        __float2bfloat16(y0);
+
+    k_out[
+        output_offset + pair + ROTARY_DIM
+    ] =
+        __float2bfloat16(y1);
+}
 __global__
 void transpose_v_kernel(
     const __nv_bfloat16* v_in,

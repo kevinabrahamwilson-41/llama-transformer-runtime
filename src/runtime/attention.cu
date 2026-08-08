@@ -31,7 +31,7 @@ static void print_first32(
     const __nv_bfloat16* device_ptr,
     int elements
 ){
-    int n = (elements < 10) ? elements : 10;
+    int n = (elements < 32) ? elements : 32;
     std::vector<__nv_bfloat16> host(n);
     cudaMemcpy(
         host.data(),
@@ -68,7 +68,8 @@ Attention::Attention(
     __nv_bfloat16* o_proj,
     float* cos_table,
     float* sin_table,
-    int max_seq_len
+    int max_seq_len,
+    int layer_idx
 )
     : input_norm_(input_norm),
       q_proj_(q_proj),
@@ -77,7 +78,8 @@ Attention::Attention(
       o_proj_(o_proj),
       cos_table_(cos_table),
       sin_table_(sin_table),
-      max_seq_len_(max_seq_len){
+      max_seq_len_(max_seq_len),
+      layer_idx_(layer_idx){
     key_cache_.allocate(
         {8,max_seq_len,64},
         DataType::BF16
@@ -97,7 +99,12 @@ Attention::Attention(
         8 * max_seq_len * 64 * sizeof(__nv_bfloat16)
     );
 }
-
+const __nv_bfloat16* Attention::get_key_cache() const{
+    return key_cache_.data_bf16();
+}
+const __nv_bfloat16* Attention::get_value_cache() const{
+    return value_cache_.data_bf16();
+}
 void Attention::forward(
     const Tensor& input,
     Tensor& output,
@@ -105,7 +112,18 @@ void Attention::forward(
     int seq_len
 )
 {
+    printf(
+    "[ATTENTION DEBUG] seq_len=%d position=%d\n",
+    seq_len,
+    position
+);
     int tokens = seq_len;
+        printf(
+        "[RMS CHECKPOINT DEBUG] seq_len=%d tokens=%d elements=%d\n",
+        seq_len,
+        tokens,
+        tokens * 2048
+    );
     // =========================================================
     // 1. RMSNorm
     //
@@ -117,7 +135,20 @@ void Attention::forward(
         {tokens, 2048},
         DataType::BF16
     );
-    cudaDeviceSynchronize();
+    if (layer_idx_ == 0 && position == 0) {
+            printf("\n[RMS RAW INPUT FIRST 32]\n");
+
+    print_first32(
+        "RMS RAW INPUT",
+        input.data_bf16(),
+        tokens * 2048
+    );
+        save_checkpoint(
+            "TEST_RMS1_INPUT_SEQ_LEN",
+            input.data_bf16(),
+            tokens * 2048
+        );
+    }
     rmsnorm_launch<2048>(
         input.data_bf16(),
         input_norm_,
@@ -125,6 +156,14 @@ void Attention::forward(
         tokens,
         1e-5f
     );
+    cudaDeviceSynchronize();
+    if (layer_idx_ == 0 && position == 0) {
+        save_checkpoint(
+            "TEST_RMS1_OUTPUT_SEQ_LEN",
+            normalized.data_bf16(),
+            tokens * 2048
+        );
+    }
     // =========================================================
     // 2. Q projection
     //
@@ -145,6 +184,11 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_q_projection",
+        q.data_bf16(),
+        tokens * 2048
+    );
     // =========================================================
     // 3. K projection
     //
@@ -165,6 +209,11 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_k_projection",
+        k.data_bf16(),
+        tokens * 512
+    );
     // =========================================================
     // 4. V projection
     //
@@ -184,6 +233,12 @@ void Attention::forward(
         tokens,
         512,
         2048
+    );
+    cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_v_projection",
+        v.data_bf16(),
+        tokens * 512
     );
     // =========================================================
     // 5. RoPE + layout conversion
@@ -218,6 +273,7 @@ void Attention::forward(
         {8, tokens, 64},
         DataType::BF16
     );
+    cudaDeviceSynchronize();
     launch_rope_qkv(
         q.data_bf16(),
         q_flash.data_bf16(),
@@ -231,6 +287,16 @@ void Attention::forward(
         position
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_q_rope",
+        q_flash.data_bf16(),
+        32 * tokens * 64
+    );
+    save_checkpoint(
+        "layer0_k_rope",
+        k_flash.data_bf16(),
+        8 * tokens * 64
+    );
     for(int h = 0; h < 8; h++){
         for(int t = 0; t < tokens; t++){
             cudaMemcpy(
@@ -323,14 +389,17 @@ void Attention::forward(
     // DEBUG: Q AFTER LAYOUT CONVERSION
     // BEFORE FLASH ATTENTION
     // =========================================================
-
     cudaDeviceSynchronize();
-
     transformer::launch_flash_attention(flash_params);
     // =========================================================
     // DEBUG: RAW FLASH ATTENTION OUTPUT
     // =========================================================
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_attention_output_heads",
+        flash_output.data_bf16(),
+        32 * tokens * 64
+    );
     // =========================================================
     // 7. Flash output layout conversion
     //
@@ -345,13 +414,18 @@ void Attention::forward(
         {tokens, 2048},
         DataType::BF16
     );
-        
+    cudaDeviceSynchronize();
     launch_flash_output_layout(
         flash_output.data_bf16(),
         attention_input.data_bf16(),
         tokens
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_attention_merged",
+        attention_input.data_bf16(),
+        tokens * 2048
+    );
     // =========================================================
     // 8. Output projection
     //
@@ -359,6 +433,11 @@ void Attention::forward(
     //        ↓
     // [tokens, 2048]
     // =========================================================
+    save_checkpoint(
+        "layer0_o_projection_input",
+        attention_input.data_bf16(),
+        tokens * 2048
+    );
     launch_gemm_2048x2048(
         attention_input.data_bf16(),
         o_proj_,
@@ -368,5 +447,10 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_o_projection_output",
+        output.data_bf16(),
+        tokens * 2048
+    );
     }
 }

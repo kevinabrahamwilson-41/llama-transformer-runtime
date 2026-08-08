@@ -17,7 +17,7 @@ int main()
 
 std::vector<std::string> prompts =
 {
-    "The capital of France is Paris. The capital of Germany is Berlin. The capital of Italy is Rome."
+    "the capital of USA is ?"
 };
 
     for (const auto& prompt : prompts)

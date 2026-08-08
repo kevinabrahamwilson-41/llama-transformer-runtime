@@ -22,5 +22,7 @@ namespace runtime{
                 int position,
                 int seq_len
             );
+            const __nv_bfloat16* get_key_cache(int layer_idx) const;
+            const __nv_bfloat16* get_value_cache(int layer_idx) const;
     };
 }

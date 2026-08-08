@@ -58,6 +58,14 @@ __global__ void rmsnorm_fwd_kernel(
     if (row >= rows) return;
     const __nv_bfloat16* row_in  = input  + row * HIDDEN;
     __nv_bfloat16*       row_out = output + row * HIDDEN;
+    if (row == rows - 1 && threadIdx.x == 0) {
+        printf("\n[RMS INPUT DEBUG] row=%d\n", row);
+        for (int i = 0; i < 32; i++) {
+            printf("%d: %.8f\n",
+                i,
+                __bfloat162float(row_in[i]));
+        }
+    }
     // Reinterpret the row as __nv_bfloat162 vectors.
     // HIDDEN must be divisible by 2.
     const uint4* row4 = reinterpret_cast<const uint4*>(row_in);
@@ -76,9 +84,16 @@ __global__ void rmsnorm_fwd_kernel(
             sum_sq += v.y * v.y;
         }
     }
-
     // Block reduction
     sum_sq = blockReduceSum(sum_sq);
+    if (threadIdx.x == 0) {
+    printf(
+        "[RMS DEBUG] row=%d sum_sq=%.9f rms=%.9f\n",
+        row,
+        sum_sq,
+        sqrtf(sum_sq / static_cast<float>(HIDDEN) + eps)
+    );
+}
     // Compute RMS reciprocal
     float rms_recip = rsqrtf(sum_sq / static_cast<float>(HIDDEN) + eps);
     // Vectorized pointers
@@ -106,6 +121,17 @@ __global__ void rmsnorm_fwd_kernel(
         }
         out4[i] = *reinterpret_cast<uint4*>(result);
     }
+    __syncthreads();
+
+if (row == rows - 1 && threadIdx.x == 0) {
+    printf("\n[RMS OUTPUT DEBUG] row=%d\n", row);
+
+    for (int i = 0; i < 32; i++) {
+        printf("%d: %.8f\n",
+               i,
+               __bfloat162float(row_out[i]));
+    }
+}
 }
 
 // Host helper: launch RMSNorm on [rows x hidden]

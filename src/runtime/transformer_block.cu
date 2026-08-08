@@ -5,18 +5,23 @@
 #include <vector>
 #include <utility>
 #include <cstdio>
+#include "debug_dump.hpp"
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 namespace runtime{
 TransformerBlock::TransformerBlock(
     Attention&& attention,
     FeedForward&& ffn
-)
-    : attention_(std::move(attention)),
+)    : attention_(std::move(attention)),
       ffn_(std::move(ffn))
 {
 }
-
+const __nv_bfloat16* TransformerBlock::get_key_cache() const{
+    return attention_.get_key_cache();
+}
+const __nv_bfloat16* TransformerBlock::get_value_cache() const{
+    return attention_.get_value_cache();
+}
 static void print_first32(
     const char* name,
     const __nv_bfloat16* device_ptr,
@@ -58,13 +63,21 @@ void TransformerBlock::forward(
     //
     // [tokens, 2048]
     // =========================================================
-
+    save_checkpoint(
+        "transformer_entry",
+        input.data_bf16(),
+        tokens * 2048
+    );
     Tensor attention_output(
         {tokens, 2048},
         DataType::BF16
     );
-
-    attention_.forward(
+    printf(
+        "[BLOCK DEBUG] seq_len=%d position=%d\n",
+        seq_len,
+        position
+    );
+        attention_.forward(
         input,
         attention_output,
         position,
@@ -98,6 +111,11 @@ void TransformerBlock::forward(
         static_cast<int64_t>(tokens) * 2048
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_attention_residual",
+        residual.data_bf16(),
+        tokens * 2048
+    );
     //std::cout << "RESIDUAL[0] = "
       //      << read_device_bf16(
         //         residual.data_bf16()
@@ -121,7 +139,11 @@ void TransformerBlock::forward(
         {tokens, 2048},
         DataType::BF16
     );
-
+    save_checkpoint(
+        "layer0_rms2_input",
+        residual.data_bf16(),
+        tokens * 2048
+    );
     ffn_.forward(
         residual,
         ffn_output,
@@ -150,6 +172,11 @@ void TransformerBlock::forward(
         static_cast<int64_t>(tokens) * 2048
     );
     cudaDeviceSynchronize();
+    save_checkpoint(
+        "layer0_output",
+        output.data_bf16(),
+        tokens * 2048
+    );
 }
 
 } // namespace runtime

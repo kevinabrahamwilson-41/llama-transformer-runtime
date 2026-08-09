@@ -22,51 +22,6 @@ FeedForward::FeedForward(
       down_proj_(down_proj)
 {
 }
-static void dump_tensor(
-    const char* path,
-    const __nv_bfloat16* device_tensor,
-    int elements
-)
-{
-    std::vector<__nv_bfloat16> host(elements);
-
-    cudaMemcpy(
-        host.data(),
-        device_tensor,
-        elements * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-
-
-    FILE* file = std::fopen(path, "w");
-
-    if (!file)
-    {
-        printf("Failed to open dump file\n");
-        exit(EXIT_FAILURE);
-    }
-
-/*
-    for(int i = 0; i < elements; i++)
-    {
-        float value =
-            __bfloat162float(host[i]);
-
-        fprintf(
-            file,
-            "%.9g\n",
-            value
-        );
-    }
-
-
-    fclose(file);
-
-    printf(
-        "[TEST] Dumped tensor: %s\n",
-        path
-    );*/
-}
 void FeedForward::forward(
     const Tensor& input,
     Tensor& output,

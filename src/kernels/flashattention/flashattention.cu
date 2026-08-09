@@ -7,7 +7,6 @@
 #include <type_traits>
 #include <cstdint>
 #include <vector>
-#include "../../runtime/debug_dump.hpp"
 namespace transformer {
 static constexpr int WARP_SIZE_FA = 32;
 template <class T> __device__ __forceinline__ T to_elem(float x);
@@ -101,7 +100,7 @@ template <int BLOCK_M, int BLOCK_N, int D_HEAD, int NUM_WARPS, bool CAUSAL,
 __global__ void flash_attention_fat_kernel(
     const T *__restrict__ Q, const T *__restrict__ K, const T *__restrict__ V,
     T *__restrict__ O, float *__restrict__ LSE, const int q_seq_len,
-    const int kv_seq_len, const int num_q_heads, const int num_kv_heads, const float scale) {
+    const int kv_seq_len, const int kv_stride, const int num_q_heads, const int num_kv_heads, const float scale) {
   static_assert(BLOCK_M == 16 * NUM_WARPS, "one m16 tile per warp");
   static_assert(BLOCK_N % 16 == 0 && D_HEAD % 16 == 0, "tile granularity");
   static_assert(BLOCK_M <= BLOCK_N, "Q stages through smem_k");
@@ -131,8 +130,9 @@ __global__ void flash_attention_fat_kernel(
   const int h_q = bh_idx - b * num_q_heads;
   const int h_kv = h_q / (num_q_heads / num_kv_heads);
   const size_t q_off = static_cast<size_t>(bh_idx) * q_seq_len * D_HEAD;
+  // kv_stride is the physical stride (in tokens) between KV heads in memory.
   const size_t kv_off =
-      static_cast<size_t>(b * num_kv_heads + h_kv) * kv_seq_len * D_HEAD;
+      static_cast<size_t>(b * num_kv_heads + h_kv) * kv_stride * D_HEAD;
   const T *Q_head = Q + q_off;
   const T *K_head = K + kv_off;
   const T *V_head = V + kv_off;
@@ -387,32 +387,6 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
   const T *Kp = reinterpret_cast<const T *>(params.K);
   const T *Vp = reinterpret_cast<const T *>(params.V);
   T *Op = reinterpret_cast<T *>(params.O);
-  save_checkpoint(
-      "flash_q_input",
-      reinterpret_cast<const __nv_bfloat16 *>(params.Q),
-      params.batch_size *
-      params.num_heads *
-      params.q_seq_len *
-      params.d_head
-  );
-
-  save_checkpoint(
-      "flash_k_input",
-      reinterpret_cast<const __nv_bfloat16 *>(params.K),
-      params.batch_size *
-      params.num_kv_heads *
-      params.kv_seq_len *
-      params.d_head
-  );
-
-  save_checkpoint(
-      "flash_v_input",
-      reinterpret_cast<const __nv_bfloat16 *>(params.V),
-      params.batch_size *
-      params.num_kv_heads *
-      params.kv_seq_len *
-      params.d_head
-  );
   if (params.causal) {
     flash_attention_fat_kernel<BM, BN, D_HEAD, NW, true, T>
       <<<grid, block, smem_bytes, params.stream>>>(
@@ -423,6 +397,7 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
           params.L,
           params.q_seq_len,
           params.kv_seq_len,
+          params.kv_stride,
           H_q,
           H_kv,
           params.scale);
@@ -436,6 +411,7 @@ inline void launch_fat_variant(const FlashAttentionParams &params) {
           params.L,
           params.q_seq_len,
           params.kv_seq_len,
+          params.kv_stride,
           H_q,
           H_kv,
           params.scale);

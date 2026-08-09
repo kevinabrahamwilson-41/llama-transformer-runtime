@@ -63,7 +63,8 @@ struct FlashAttentionParams {
                     // K/V are [B, num_kv_heads, S, D]; num_heads % num_kv_heads
                     // == 0.
   int q_seq_len;     // Q sequence length
-  int kv_seq_len;    // KV cache sequence length
+  int kv_seq_len;    // KV cache active sequence length (number of valid tokens)
+  int kv_stride;     // physical stride (in tokens) between KV heads in memory (e.g., max_seq_len)
   int d_head;  // 64 or 128
   float scale; // Typically 1.0f / sqrtf(d_head)
   bool causal; // true = causal mask (upper triangle masked)

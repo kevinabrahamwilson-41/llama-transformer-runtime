@@ -16,167 +16,6 @@
 #include "../kernels/sampling/argmax_128256.hpp"
 namespace fs = std::filesystem;
 namespace runtime{
-    static void save_int_checkpoint(
-    const std::string& name,
-    const int* device_ptr,
-    size_t elements
-){
-    namespace fs = std::filesystem;
-
-    fs::create_directories("cuda_debug");
-
-    std::vector<int> host(elements);
-
-    cudaMemcpy(
-        host.data(),
-        device_ptr,
-        elements * sizeof(int),
-        cudaMemcpyDeviceToHost
-    );
-
-    std::ofstream file(
-        "cuda_debug/" + name + ".bin",
-        std::ios::binary
-    );
-
-    uint64_t count =
-        static_cast<uint64_t>(elements);
-
-    uint32_t dtype = 1;
-
-    file.write(
-        reinterpret_cast<const char*>(&count),
-        sizeof(count)
-    );
-
-    file.write(
-        reinterpret_cast<const char*>(&dtype),
-        sizeof(dtype)
-    );
-
-    file.write(
-        reinterpret_cast<const char*>(host.data()),
-        elements * sizeof(int)
-    );
-
-    file.close();
-
-    printf(
-        "[CHECKPOINT] SAVED: cuda_debug/%s.bin "
-        "elements=%zu\n",
-        name.c_str(),
-        elements
-    );
-}
-    // ============================================================
-    // CUDA DEBUG CHECKPOINTS
-    // ============================================================
-    static constexpr const char* DEBUG_DIR = "cpp_debug";
-    // ============================================================
-    // Save BF16 GPU tensor as FLOAT32 binary checkpoint
-    // ============================================================
-    static void save_checkpoint(
-    const std::string& name,
-    const __nv_bfloat16* device_ptr,
-    size_t elements
-){
-    namespace fs = std::filesystem;
-
-    const std::string DEBUG_DIR = "cuda_debug";
-
-    fs::create_directories(DEBUG_DIR);
-
-    if(device_ptr == nullptr){
-        printf(
-            "[CHECKPOINT] %s: NULL\n",
-            name.c_str()
-        );
-        return;
-    }
-
-    // --------------------------------------------------
-    // Copy BF16 GPU data -> CPU
-    // --------------------------------------------------
-
-    std::vector<__nv_bfloat16> host_bf16(elements);
-
-    cudaError_t err = cudaMemcpy(
-        host_bf16.data(),
-        device_ptr,
-        elements * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-
-    if(err != cudaSuccess){
-        printf(
-            "[CHECKPOINT] %s: cudaMemcpy FAILED: %s\n",
-            name.c_str(),
-            cudaGetErrorString(err)
-        );
-        return;
-    }
-
-    // --------------------------------------------------
-    // Convert BF16 -> FP32
-    // --------------------------------------------------
-
-    std::vector<float> host_float(elements);
-
-    for(size_t i = 0; i < elements; i++){
-        host_float[i] =
-            __bfloat162float(host_bf16[i]);
-    }
-
-    // --------------------------------------------------
-    // Save binary
-    // --------------------------------------------------
-
-    const std::string path =
-        DEBUG_DIR + "/" + name + ".bin";
-
-    std::ofstream file(
-        path,
-        std::ios::binary
-    );
-
-    if(!file){
-        printf(
-            "[CHECKPOINT] %s: FAILED OPENING FILE\n",
-            name.c_str()
-        );
-        return;
-    }
-
-    // Number of elements
-    uint64_t count =
-        static_cast<uint64_t>(elements);
-
-    // Always float32 on disk
-    uint32_t dtype = 0;
-
-    file.write(
-        reinterpret_cast<const char*>(&count),
-        sizeof(count)
-    );
-
-    file.write(
-        reinterpret_cast<const char*>(&dtype),
-        sizeof(dtype)
-    );
-
-    file.write(
-        reinterpret_cast<const char*>(host_float.data()),
-        elements * sizeof(float)
-    );
-
-    file.close();
-    printf(
-        "[LLAMA_RUNTIME_CU] SAVED: %s "
-        "elements=%zu\n",
-        path.c_str(),
-        elements
-    );
-}
     void LlamaRuntime::build_rope_tables(){
         constexpr int ROTARY_DIM = 32;
         constexpr int HEAD_DIM = 64;
@@ -309,28 +148,6 @@ namespace runtime{
             seq_len
         );
     }
-    
-    static void print_first32(
-        const char* name,
-        const __nv_bfloat16* device_ptr,
-        int elements
-    ){
-        int n = (elements < 10) ? elements : 10;
-        std::vector<__nv_bfloat16> host(n);
-        cudaMemcpy(
-            host.data(),
-            device_ptr,
-            n * sizeof(__nv_bfloat16),
-            cudaMemcpyDeviceToHost
-        );
-        printf("\n==============================\n");
-        printf("%s\n", name);
-        printf("==============================\n");
-        for (int i = 0; i < n; i++){
-            printf("%.9f\n", __bfloat162float(host[i]));
-        }
-    }
-    
     std::string LlamaRuntime::generate(
         const std::string& prompt,
         int max_new_tokens,
@@ -408,11 +225,6 @@ namespace runtime{
             1
         );
         cudaDeviceSynchronize();
-        save_checkpoint(
-            "generation_embedding",
-            hidden_states_.data_bf16(),
-            llama::HIDDEN_SIZE
-        );
         // ==================================================
         // 3. Transformer forward
         //
@@ -455,18 +267,18 @@ namespace runtime{
             llama::VOCAB_SIZE,  // N
             llama::HIDDEN_SIZE  // K
         );
-        // Argmax kernel
+        // Argmax kernel — allocate device output and copy back
         int next_token = 0;
+        int* d_next_token = nullptr;
+        cudaMalloc(&d_next_token, sizeof(int));
         launch_argmax(
             logits_.data_bf16(),
-            &next_token,
+            d_next_token,
             0
         );
+        cudaMemcpy(&next_token, d_next_token, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaFree(d_next_token);
         cudaDeviceSynchronize();
-        printf(
-            "GPU ARGMAX TOKEN = %d\n",
-            next_token
-        );
         return next_token;
     }
     int LlamaRuntime::forward_prefill(
@@ -487,11 +299,6 @@ namespace runtime{
             seq_len * sizeof(int),
             cudaMemcpyHostToDevice
         );
-        save_int_checkpoint(
-            "input_ids",
-            prompt_tokens_gpu,
-            seq_len
-        );
         // ==================================================
         // 2. Embedding
         //
@@ -507,11 +314,6 @@ namespace runtime{
             seq_len
         );
         cudaDeviceSynchronize();
-        save_checkpoint(
-            "embedding",
-            hidden_states_.data_bf16(),
-            static_cast<size_t>(seq_len) * llama::HIDDEN_SIZE
-        );
         // ==================================================
         // 3. Transformer PREFILL
         // IMPORTANT:
@@ -534,13 +336,6 @@ namespace runtime{
             seq_len
         );
         cudaDeviceSynchronize();
-        // ==================================================
-        // DEBUG
-        // ==================================================
-        printf("\n==============================\n");
-        printf("PREFILL TRANSFORMER COMPLETE\n");
-        printf("seq_len=%d\n", seq_len);
-        printf("==============================\n");
         // ==================================================
         // 4. Extract LAST TOKEN hidden state
         // transformer_output:
@@ -593,11 +388,15 @@ namespace runtime{
         // 7. Argmax
         // ==================================================
         int next_token = 0;
+        int* d_next_token = nullptr;
+        cudaMalloc(&d_next_token, sizeof(int));
         launch_argmax(
             logits_.data_bf16(),
-            &next_token,
+            d_next_token,
             0
         );
+        cudaMemcpy(&next_token, d_next_token, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaFree(d_next_token);
         cudaDeviceSynchronize();
         // ==================================================
         // Cleanup

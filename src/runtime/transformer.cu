@@ -1,7 +1,6 @@
 #include "transformer.hpp"
 #include <utility>
 #include <cstdio>
-#include "debug_dump.hpp"
 namespace runtime
 {
 Transformer::Transformer(
@@ -51,7 +50,6 @@ void Transformer::forward(
     int position,
     int seq_len
 ){  
-    printf("Transformer seq_len=%d\n", seq_len);
     const int tokens = seq_len;
     Tensor buffer_a(
         {tokens, HIDDEN_SIZE},
@@ -63,23 +61,9 @@ void Transformer::forward(
     );
     const Tensor* current =
         &input;
-    if (position == 0) {
-        save_checkpoint(
-            "transformer_entry",
-            current->data_bf16(),
-            tokens * HIDDEN_SIZE
-        );
-    }
     Tensor* next =
         &buffer_a;
     for(int i = 0; i < NUM_LAYERS; i++){
-        if(i == 0 && position == 0){
-            save_checkpoint(
-                "before_layer0",
-                current->data_bf16(),
-                tokens * HIDDEN_SIZE
-            );
-        }
         layers_[i].forward(
             *current,
             *next,

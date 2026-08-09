@@ -23,29 +23,7 @@ attention.cu
 #include "../kernels/flashattention/flashattention.h"
 #include "layout.hpp"
 #include <vector>
-#include "debug_dump.hpp"
 namespace runtime{
-
-static void print_first32(
-    const char* name,
-    const __nv_bfloat16* device_ptr,
-    int elements
-){
-    int n = (elements < 32) ? elements : 32;
-    std::vector<__nv_bfloat16> host(n);
-    cudaMemcpy(
-        host.data(),
-        device_ptr,
-        n * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-    printf("\n==============================\n");
-    printf("%s\n", name);
-    printf("==============================\n");
-    for (int i = 0; i < n; i++){
-        printf("%.9f\n", __bfloat162float(host[i]));
-    }
-}
 
 #define CUDA_CHECK(call)                                      \
 do                                                            \
@@ -112,18 +90,7 @@ void Attention::forward(
     int seq_len
 )
 {
-    printf(
-    "[ATTENTION DEBUG] seq_len=%d position=%d\n",
-    seq_len,
-    position
-);
     int tokens = seq_len;
-        printf(
-        "[RMS CHECKPOINT DEBUG] seq_len=%d tokens=%d elements=%d\n",
-        seq_len,
-        tokens,
-        tokens * 2048
-    );
     // =========================================================
     // 1. RMSNorm
     //
@@ -135,20 +102,6 @@ void Attention::forward(
         {tokens, 2048},
         DataType::BF16
     );
-    if (layer_idx_ == 0 && position == 0) {
-            printf("\n[RMS RAW INPUT FIRST 32]\n");
-
-    print_first32(
-        "RMS RAW INPUT",
-        input.data_bf16(),
-        tokens * 2048
-    );
-        save_checkpoint(
-            "TEST_RMS1_INPUT_SEQ_LEN",
-            input.data_bf16(),
-            tokens * 2048
-        );
-    }
     rmsnorm_launch<2048>(
         input.data_bf16(),
         input_norm_,
@@ -157,13 +110,6 @@ void Attention::forward(
         1e-5f
     );
     cudaDeviceSynchronize();
-    if (layer_idx_ == 0 && position == 0) {
-        save_checkpoint(
-            "TEST_RMS1_OUTPUT_SEQ_LEN",
-            normalized.data_bf16(),
-            tokens * 2048
-        );
-    }
     // =========================================================
     // 2. Q projection
     //
@@ -184,11 +130,6 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_q_projection",
-        q.data_bf16(),
-        tokens * 2048
-    );
     // =========================================================
     // 3. K projection
     //
@@ -209,11 +150,6 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_k_projection",
-        k.data_bf16(),
-        tokens * 512
-    );
     // =========================================================
     // 4. V projection
     //
@@ -235,11 +171,6 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_v_projection",
-        v.data_bf16(),
-        tokens * 512
-    );
     // =========================================================
     // 5. RoPE + layout conversion
     //
@@ -287,16 +218,6 @@ void Attention::forward(
         position
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_q_rope",
-        q_flash.data_bf16(),
-        32 * tokens * 64
-    );
-    save_checkpoint(
-        "layer0_k_rope",
-        k_flash.data_bf16(),
-        8 * tokens * 64
-    );
     for(int h = 0; h < 8; h++){
         for(int t = 0; t < tokens; t++){
             cudaMemcpy(
@@ -372,6 +293,8 @@ void Attention::forward(
             kv_len = position + 1;
         }
         flash_params.kv_seq_len = kv_len;
+        // physical stride between KV heads (in tokens) — key/value caches are allocated with max_seq_len spacing
+        flash_params.kv_stride = max_seq_len_;
         flash_params.d_head =
             64;
         flash_params.scale =
@@ -395,11 +318,6 @@ void Attention::forward(
     // DEBUG: RAW FLASH ATTENTION OUTPUT
     // =========================================================
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_attention_output_heads",
-        flash_output.data_bf16(),
-        32 * tokens * 64
-    );
     // =========================================================
     // 7. Flash output layout conversion
     //
@@ -421,11 +339,6 @@ void Attention::forward(
         tokens
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_attention_merged",
-        attention_input.data_bf16(),
-        tokens * 2048
-    );
     // =========================================================
     // 8. Output projection
     //
@@ -433,11 +346,6 @@ void Attention::forward(
     //        ↓
     // [tokens, 2048]
     // =========================================================
-    save_checkpoint(
-        "layer0_o_projection_input",
-        attention_input.data_bf16(),
-        tokens * 2048
-    );
     launch_gemm_2048x2048(
         attention_input.data_bf16(),
         o_proj_,
@@ -447,10 +355,5 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_o_projection_output",
-        output.data_bf16(),
-        tokens * 2048
-    );
     }
 }

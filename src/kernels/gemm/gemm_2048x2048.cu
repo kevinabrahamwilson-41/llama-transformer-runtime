@@ -151,10 +151,18 @@ void bf16_tensorcore_gemm_2048x2048(
             int offset = idx * COPY_ELEMS;
             int r = offset / CTA_N;
             int c = offset % CTA_N;
-            cp_async_b16(
-                &Bs[0][r][c],
-                &B[r * N + (cta_col_start + c)]
-            );
+            // Bounds-check B preload — last CTA may go out of range
+            if (cta_col_start + c + COPY_ELEMS <= N) {
+                cp_async_b16(
+                    &Bs[0][r][c],
+                    &B[r * N + (cta_col_start + c)]
+                );
+            } else {
+                // zero pad the tail
+                for (int i = 0; i < COPY_ELEMS; ++i) {
+                    Bs[0][r][c + i] = __float2bfloat16(0.0f);
+                }
+            }
         }
         cp_async_commit();
         cp_async_wait();

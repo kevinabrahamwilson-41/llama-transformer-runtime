@@ -5,7 +5,6 @@
 #include <vector>
 #include <utility>
 #include <cstdio>
-#include "debug_dump.hpp"
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 namespace runtime{
@@ -21,26 +20,6 @@ const __nv_bfloat16* TransformerBlock::get_key_cache() const{
 }
 const __nv_bfloat16* TransformerBlock::get_value_cache() const{
     return attention_.get_value_cache();
-}
-static void print_first32(
-    const char* name,
-    const __nv_bfloat16* device_ptr,
-    int elements
-){
-    int n = (elements < 10) ? elements : 10;
-    std::vector<__nv_bfloat16> host(n);
-    cudaMemcpy(
-        host.data(),
-        device_ptr,
-        n * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    );
-    printf("\n==============================\n");
-    printf("%s\n", name);
-    printf("==============================\n");
-    for (int i = 0; i < n; i++){
-        printf("%.9f\n", __bfloat162float(host[i]));
-    }
 }
 void TransformerBlock::forward(
     const Tensor& input,
@@ -63,21 +42,11 @@ void TransformerBlock::forward(
     //
     // [tokens, 2048]
     // =========================================================
-    save_checkpoint(
-        "transformer_entry",
-        input.data_bf16(),
-        tokens * 2048
-    );
     Tensor attention_output(
         {tokens, 2048},
         DataType::BF16
     );
-    printf(
-        "[BLOCK DEBUG] seq_len=%d position=%d\n",
-        seq_len,
-        position
-    );
-        attention_.forward(
+    attention_.forward(
         input,
         attention_output,
         position,
@@ -111,16 +80,6 @@ void TransformerBlock::forward(
         static_cast<int64_t>(tokens) * 2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_attention_residual",
-        residual.data_bf16(),
-        tokens * 2048
-    );
-    //std::cout << "RESIDUAL[0] = "
-      //      << read_device_bf16(
-        //         residual.data_bf16()
-          //      )
-            //<< "\n";
     // =========================================================
     // 3. FeedForward
     //
@@ -139,22 +98,12 @@ void TransformerBlock::forward(
         {tokens, 2048},
         DataType::BF16
     );
-    save_checkpoint(
-        "layer0_rms2_input",
-        residual.data_bf16(),
-        tokens * 2048
-    );
     ffn_.forward(
         residual,
         ffn_output,
         seq_len
     );
     cudaDeviceSynchronize();
-    //std::cout << "FFN[0] = "
-      //      << read_device_bf16(
-        //         ffn_output.data_bf16()
-          //      )
-            //<< "\n";
     // =========================================================
     // 4. FFN residual
     //
@@ -164,7 +113,6 @@ void TransformerBlock::forward(
     //
     // [tokens, 2048]
     // =========================================================
-
     transformer::residual_add(
         residual.data_bf16(),
         ffn_output.data_bf16(),
@@ -172,11 +120,6 @@ void TransformerBlock::forward(
         static_cast<int64_t>(tokens) * 2048
     );
     cudaDeviceSynchronize();
-    save_checkpoint(
-        "layer0_output",
-        output.data_bf16(),
-        tokens * 2048
-    );
 }
 
 } // namespace runtime

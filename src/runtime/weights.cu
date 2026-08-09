@@ -27,56 +27,6 @@ namespace llama {
             );                                                \
         }                                                     \
     } while (0)
-
-
-static void transpose_embedding_to_lm_head(
-    const __nv_bfloat16* src,
-    __nv_bfloat16* dst,
-    int rows,
-    int cols
-)
-{
-    std::vector<__nv_bfloat16> host_src(
-        rows * cols
-    );
-
-    std::vector<__nv_bfloat16> host_dst(
-        rows * cols
-    );
-
-
-    CUDA_CHECK(cudaMemcpy(
-        host_src.data(),
-        src,
-        rows * cols * sizeof(__nv_bfloat16),
-        cudaMemcpyDeviceToHost
-    ));
-
-
-    // src:
-    // [VOCAB,HIDDEN]
-    //
-    // dst:
-    // [HIDDEN,VOCAB]
-
-    for(int i = 0; i < rows; i++)
-    {
-        for(int j = 0; j < cols; j++)
-        {
-            host_dst[j * rows + i] =
-                host_src[i * cols + j];
-        }
-    }
-
-
-    CUDA_CHECK(cudaMemcpy(
-        dst,
-        host_dst.data(),
-        rows * cols * sizeof(__nv_bfloat16),
-        cudaMemcpyHostToDevice
-    ));
-}
-
 // ============================================================
 // MODEL WEIGHT SIZES
 // ============================================================

@@ -623,7 +623,7 @@ LlamaRuntime::LlamaRuntime(
     // Initialize runtime
     initialize();
 }
-LlamaRuntime::LlamaRuntime(){
+LlamaRuntime::~LlamaRuntime(){
     // Free RoPE tables
     if(cos_table_){
         cudaFree(cos_table_);

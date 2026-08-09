@@ -15,7 +15,7 @@ public:
         const std::string& weight_path,
         const std::string& tokenizer_path
     );
-    LlamaRuntime();
+    ~LlamaRuntime();
     std::string generate(
         const std::string& prompt,
         int max_new_tokens = 128,

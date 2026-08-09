@@ -8,7 +8,7 @@ namespace transformer::tokenizer {
     void SpecialTokenLoader::load(
         TokenizerModel& model){
         std::ifstream file(
-            "/home/dexter-morgan/PROJECTS/FINAL YEAR PROJECT/weights/llama-3.2-1b-instruct/tokenizer.json"
+            "/home/dexter-morgan/PROJECTS/FINAL YEAR PROJECT/weights/Llama-3.2-1B-Instruct/tokenizer.json"
         );
         if(!file.is_open()){
             throw std::runtime_error(

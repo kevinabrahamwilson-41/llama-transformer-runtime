@@ -40,6 +40,10 @@ namespace transformer::tokenizer{
             get_id("<|eom_id|>");
         python_tag_id_ =
             get_id("<|python_tag|>");
+            start_header_id_ =
+            get_id("<|start_header_id|>");
+        end_header_id_ =
+            get_id("<|end_header_id|>");
         stop_tokens_.clear();
         stop_tokens_.push_back(
             eos_id_
@@ -141,6 +145,12 @@ namespace transformer::tokenizer{
     }
     TokenID Tokenizer::python_tag_id() const noexcept{
         return python_tag_id_;
+    }
+    TokenID Tokenizer::start_header_id() const noexcept{
+    return start_header_id_;
+    }
+    TokenID Tokenizer::end_header_id() const noexcept{
+        return end_header_id_;
     }
     const TokenizerModel& Tokenizer::model() const noexcept{
         return model_;

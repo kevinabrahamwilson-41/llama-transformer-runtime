@@ -31,7 +31,11 @@ namespace transformer::tokenizer{
         const TokenizerModel& model() const noexcept;
         [[nodiscard]]
         std::size_t vocab_size() const noexcept;
-    private:
+        [[nodiscard]]
+        TokenID start_header_id() const noexcept;
+        [[nodiscard]]
+        TokenID end_header_id() const noexcept;
+            private:
         void initialize_special_token_ids();
     private:
         TokenizerModel model_;
@@ -42,5 +46,7 @@ namespace transformer::tokenizer{
         TokenID eom_id_ = -1;
         TokenID python_tag_id_ = -1;
         TokenSequence stop_tokens_;
+        TokenID start_header_id_ = -1;
+        TokenID end_header_id_ = -1;
     };
 }

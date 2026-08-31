@@ -23,7 +23,20 @@ attention.cu
 #include "../kernels/flashattention/flashattention.h"
 #include "layout.hpp"
 #include <vector>
+#include <atomic>
 namespace runtime{
+
+// Accumulator for attention forward GPU time (ms)
+static std::atomic<double> attention_accumulated_ms{0.0};
+
+void Attention::reset_attention_timing(){
+    attention_accumulated_ms.store(0.0);
+}
+
+double Attention::get_accumulated_attention_ms(){
+    return attention_accumulated_ms.load();
+}
+
 
 #define CUDA_CHECK(call)                                      \
 do                                                            \
@@ -91,6 +104,11 @@ void Attention::forward(
 )
 {
     int tokens = seq_len;
+    // start attention timer (GPU)
+    cudaEvent_t _att_start_evt, _att_stop_evt;
+    cudaEventCreate(&_att_start_evt);
+    cudaEventCreate(&_att_stop_evt);
+    cudaEventRecord(_att_start_evt);
     // =========================================================
     // 1. RMSNorm
     //
@@ -355,5 +373,19 @@ void Attention::forward(
         2048
     );
     cudaDeviceSynchronize();
+    // stop attention timer and accumulate
+    cudaEventRecord(_att_stop_evt);
+    cudaEventSynchronize(_att_stop_evt);
+    float _att_elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&_att_elapsed_ms, _att_start_evt, _att_stop_evt);
+    double old_value = attention_accumulated_ms.load(std::memory_order_relaxed);
+    while (!attention_accumulated_ms.compare_exchange_weak(
+        old_value,
+        old_value + static_cast<double>(_att_elapsed_ms),
+        std::memory_order_relaxed,
+        std::memory_order_relaxed)) {
+    }
+    cudaEventDestroy(_att_start_evt);
+    cudaEventDestroy(_att_stop_evt);
     }
 }

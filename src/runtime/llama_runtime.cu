@@ -15,6 +15,8 @@
 #include "../kernels/rmsnorm/rmsnorm.hpp"
 #include "../kernels/gemm/gemm_2048x128256.hpp"
 #include "../kernels/sampling/argmax_128256.hpp"
+#include "attention.hpp"
+#include "ffn.hpp"
 namespace fs = std::filesystem;
 namespace runtime{
     double LlamaRuntime::calculate_model_weights_gb() const{
@@ -216,20 +218,6 @@ namespace runtime{
             s.activation_memory_mb);
         printf("  Runtime buffers      : %.3f MB\n",
             s.runtime_buffer_mb);
-        // ========================================================
-        // Compute
-        // ========================================================
-        printf("\n[Compute]\n");
-        printf("  Estimated FLOPs      : %.3e\n",
-            s.estimated_flops);
-        printf("  FLOPs / token        : %.3e\n",
-            s.estimated_flops_per_token);
-        printf("  Estimated GFLOPS     : %.3f\n",
-            s.estimated_gflops);
-        printf("  Estimated TFLOPS     : %.6f\n",
-            s.estimated_tflops);
-        printf("  Arithmetic intensity : %.3f FLOP/byte\n",
-            s.arithmetic_intensity);
         // ========================================================
         // End
         // ========================================================
@@ -776,6 +764,9 @@ namespace runtime{
         // ==================================================
         CudaTimer timer_transformer;
         timer_transformer.start();
+        // reset per-layer timers
+        Attention::reset_attention_timing();
+        FeedForward::reset_ffn_timing();
         transformer_->forward(
             hidden_states_,
             transformer_output_,
@@ -785,6 +776,11 @@ namespace runtime{
         cudaDeviceSynchronize();
         performance_stats_.decode_transformer_ms +=
             timer_transformer.stop_ms();
+        // accumulate per-layer timings recorded during transformer forward
+        performance_stats_.decode_attention_ms +=
+            Attention::get_accumulated_attention_ms();
+        performance_stats_.decode_ffn_ms +=
+            FeedForward::get_accumulated_ffn_ms();
         // ==================================================
         // 5. FINAL RMSNorm
         // ==================================================
@@ -907,6 +903,9 @@ namespace runtime{
         // ==================================================
         CudaTimer timer_transformer;
         timer_transformer.start();
+        // reset per-layer timers
+        Attention::reset_attention_timing();
+        FeedForward::reset_ffn_timing();
         transformer_->forward(
             hidden_states_,
             transformer_output_,
@@ -916,6 +915,11 @@ namespace runtime{
         cudaDeviceSynchronize();
         performance_stats_.prefill_transformer_ms =
             timer_transformer.stop_ms();
+        // record per-layer timings collected during transformer forward
+        performance_stats_.prefill_attention_ms =
+            Attention::get_accumulated_attention_ms();
+        performance_stats_.prefill_ffn_ms =
+            FeedForward::get_accumulated_ffn_ms();
         // ==================================================
         // 5. Extract LAST TOKEN hidden state
         //

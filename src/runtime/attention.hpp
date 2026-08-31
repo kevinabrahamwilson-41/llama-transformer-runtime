@@ -30,6 +30,10 @@ public:
     const __nv_bfloat16* get_key_cache() const;
     const __nv_bfloat16* get_value_cache() const;
 
+    // Timing helpers (accumulate GPU time spent inside Attention::forward)
+    static void reset_attention_timing();
+    static double get_accumulated_attention_ms();
+
 private:
 
     __nv_bfloat16* input_norm_;

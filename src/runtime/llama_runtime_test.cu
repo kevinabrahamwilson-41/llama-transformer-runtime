@@ -43,7 +43,7 @@ int main(){
             std::string response =
                 runtime.chat(
                     prompt,
-                    100
+                    1000
                 );
             std::cout
                 << "Assistant: "

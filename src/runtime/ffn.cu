@@ -8,8 +8,17 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <vector>
+#include <atomic>
 namespace runtime
 {
+// Accumulator for FFN forward GPU time (ms)
+double ffn_accumulated_ms = 0.0;
+void FeedForward::reset_ffn_timing(){
+    ffn_accumulated_ms = 0.0;
+}
+double FeedForward::get_accumulated_ffn_ms(){
+    return ffn_accumulated_ms;
+}
 FeedForward::FeedForward(
     __nv_bfloat16* ffn_norm,
     __nv_bfloat16* gate_proj,
@@ -28,6 +37,11 @@ void FeedForward::forward(
     int seq_len
 ) const
 {   int tokens = seq_len;
+    // start FFN timer (GPU)
+    cudaEvent_t _ffn_start_evt, _ffn_stop_evt;
+    cudaEventCreate(&_ffn_start_evt);
+    cudaEventCreate(&_ffn_stop_evt);
+    cudaEventRecord(_ffn_start_evt);
     // =========================================================
     // Temporary tensors
     // =========================================================
@@ -120,6 +134,14 @@ void FeedForward::forward(
         2048,
         8192
     );
+    // stop FFN timer and accumulate
+    cudaEventRecord(_ffn_stop_evt);
+    cudaEventSynchronize(_ffn_stop_evt);
+    float _ffn_elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&_ffn_elapsed_ms, _ffn_start_evt, _ffn_stop_evt);
+    ffn_accumulated_ms += static_cast<double>(_ffn_elapsed_ms);
+    cudaEventDestroy(_ffn_start_evt);
+    cudaEventDestroy(_ffn_stop_evt);
 }
 
 } // namespace runtime

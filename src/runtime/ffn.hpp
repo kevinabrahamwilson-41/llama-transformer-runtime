@@ -20,6 +20,10 @@ public:
         int seq_len
     ) const;
 
+    // Timing helpers (accumulate GPU time spent inside FeedForward::forward)
+    static void reset_ffn_timing();
+    static double get_accumulated_ffn_ms();
+
 private:
 
     __nv_bfloat16* ffn_norm_;

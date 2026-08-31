@@ -446,3 +446,69 @@ void launch_flash_attention(const FlashAttentionParams &params) {
   }
 }
 } // namespace transformer
+int main() {
+    using T = __nv_bfloat16;
+
+    const int B = 1;
+    const int H = 32;
+    const int Hkv = 8;
+    const int SQ = 128;
+    const int SKV = 128;
+    const int D = 64;
+
+    T *Q, *K, *V, *O;
+    float *L;
+
+    size_t q_size =
+        (size_t)B * H * SQ * D * sizeof(T);
+
+    size_t kv_size =
+        (size_t)B * Hkv * SKV * D * sizeof(T);
+
+    size_t l_size =
+        (size_t)B * H * SQ * sizeof(float);
+
+    cudaMalloc(&Q, q_size);
+    cudaMalloc(&K, kv_size);
+    cudaMalloc(&V, kv_size);
+    cudaMalloc(&O, q_size);
+    cudaMalloc(&L, l_size);
+
+    cudaMemset(Q, 0, q_size);
+    cudaMemset(K, 0, kv_size);
+    cudaMemset(V, 0, kv_size);
+
+    transformer::FlashAttentionParams p{};
+
+    p.Q = Q;
+    p.K = K;
+    p.V = V;
+    p.O = O;
+    p.L = L;
+
+    p.q_seq_len = SQ;
+    p.kv_seq_len = SKV;
+    p.kv_stride = SKV;
+
+    p.batch_size = B;
+    p.num_heads = H;
+    p.num_kv_heads = Hkv;
+
+    p.d_head = D;
+    p.scale = 1.0f / sqrtf((float)D);
+    p.causal = true;
+    p.dtype = transformer::DType::BF16;
+    p.stream = nullptr;
+
+    transformer::launch_flash_attention(p);
+
+    cudaDeviceSynchronize();
+
+    cudaFree(Q);
+    cudaFree(K);
+    cudaFree(V);
+    cudaFree(O);
+    cudaFree(L);
+
+    return 0;
+}

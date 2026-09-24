@@ -99,6 +99,14 @@ public:
         bool use_topk = false,
         int k = 50
     );
+    std::vector<float> generate_logits(
+        const std::string& prompt
+    );
+
+    std::vector<int> generate_token_ids(
+        const std::string& prompt,
+        int max_new_tokens = 50
+    );
     std::string chat(
         const std::string& user_message,
         int max_new_tokens = 128

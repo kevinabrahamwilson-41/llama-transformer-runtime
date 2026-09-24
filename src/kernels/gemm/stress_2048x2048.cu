@@ -38,12 +38,6 @@ constexpr int WARMUP_ITERS = 20;
 constexpr int BENCH_ITERS  = 100;
 
 const int SEQ_LENGTHS[] = {
-    32,
-    64,
-    128,
-    256,
-    512,
-    1024,
     2048
 };
 
@@ -93,14 +87,17 @@ int main()
     // ---------------------------------------------------------
     std::cout
         << std::left
-        << std::setw(12) << "Seq Len"
-        << std::setw(16) << "M"
-        << std::setw(16) << "N"
-        << std::setw(16) << "K"
-        << std::setw(20) << "Avg Latency (us)"
+        << std::setw(10) << "Seq"
+        << std::setw(10) << "M"
+        << std::setw(10) << "N"
+        << std::setw(10) << "K"
+        << std::setw(18) << "Latency(us)"
+        << std::setw(16) << "TFLOP/s"
+        << std::setw(18) << "Bandwidth(GB/s)"
+        << std::setw(12) << "% Peak"
         << "\n";
 
-    std::cout << "------------------------------------------------------------\n";
+    std::cout << "--------------------------------------------------------------------------------\n";
 
     for (int seq_len : SEQ_LENGTHS)
     {
@@ -222,22 +219,66 @@ int main()
 
         float avg_us =
             (total_ms * 1000.0f) / BENCH_ITERS;
+        // ---------------------------------------------------------
+        // Performance metrics
+        // ---------------------------------------------------------
 
+        // Total floating-point operations for GEMM:
+        // C[M x N] = A[M x K] * B[K x N]
+        double flops =
+            2.0 * static_cast<double>(M)
+                * static_cast<double>(N)
+                * static_cast<double>(K);
+
+        // Convert latency from microseconds to seconds
+        double avg_seconds =
+            static_cast<double>(avg_us) * 1e-6;
+
+        // TFLOP/s
+        double tflops =
+            flops / avg_seconds / 1e12;
+
+        // BF16 = 2 bytes
+        constexpr size_t BYTES_PER_BF16 = 2;
+
+        // Global memory traffic:
+        // Read A + Read B + Write C
+        double memory_bytes =
+            static_cast<double>(
+                (static_cast<size_t>(M) * K) +
+                (static_cast<size_t>(K) * N) +
+                (static_cast<size_t>(M) * N)
+            ) * BYTES_PER_BF16;
+
+        // GB/s
+        double bandwidth_gbps =
+            memory_bytes / avg_seconds / 1e9;
+        constexpr double BF16_PEAK_TFLOPS = 116.7;
+        double percent_peak =
+            (tflops / BF16_PEAK_TFLOPS) * 100.0;
         // -----------------------------------------------------
         // Print result
         // -----------------------------------------------------
         std::cout
             << std::left
-            << std::setw(12) << seq_len
-            << std::setw(16) << M
-            << std::setw(16) << N
-            << std::setw(16) << K
-            << std::setw(20)
+            << std::setw(10) << seq_len
+            << std::setw(10) << M
+            << std::setw(10) << N
+            << std::setw(10) << K
+            << std::setw(18)
             << std::fixed
             << std::setprecision(3)
             << avg_us
+            << std::setw(16)
+            << std::setprecision(3)
+            << tflops
+            << std::setw(18)
+            << std::setprecision(2)
+            << bandwidth_gbps
+            << std::setw(12)
+            << std::setprecision(2)
+            << percent_peak
             << "\n";
-
         // -----------------------------------------------------
         // Cleanup
         // -----------------------------------------------------

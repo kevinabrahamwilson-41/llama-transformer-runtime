@@ -17,6 +17,7 @@
 #include "../kernels/sampling/argmax_128256.hpp"
 #include "attention.hpp"
 #include "ffn.hpp"
+#include <iostream>
 namespace fs = std::filesystem;
 namespace runtime{
     double LlamaRuntime::calculate_model_weights_gb() const{
@@ -28,6 +29,98 @@ namespace runtime{
         const std::uintmax_t file_size =
             std::filesystem::file_size(weights_path);
         return static_cast<double>(file_size) / 1e9;
+    }
+    std::vector<float> LlamaRuntime::generate_logits(
+    const std::string& prompt
+    ) {
+        transformer::tokenizer::TokenSequence tokens =
+            tokenizer_->encode(prompt);
+        if (tokens.empty()) {
+            throw std::runtime_error(
+                "generate_logits: prompt produced no tokens"
+            );
+        }
+        reset_performance_stats();
+        forward_prefill(tokens, 0);
+        const int64_t num_logits = logits_.numel();
+        std::vector<__nv_bfloat16> host_logits(
+            static_cast<size_t>(num_logits)
+        );
+        cudaError_t error = cudaMemcpy(
+            host_logits.data(),
+            logits_.data_bf16(),
+            logits_.bytes(),
+            cudaMemcpyDeviceToHost
+        );
+        if (error != cudaSuccess) {
+            throw std::runtime_error(
+                std::string("generate_logits cudaMemcpy failed: ") +
+                cudaGetErrorString(error)
+            );
+        }
+        std::vector<float> result(
+            static_cast<size_t>(num_logits)
+        );
+        for (int64_t i = 0; i < num_logits; ++i) {
+            result[static_cast<size_t>(i)] =
+                __bfloat162float(host_logits[static_cast<size_t>(i)]);
+        }
+        return result;
+    }
+    std::vector<int> LlamaRuntime::generate_token_ids(
+        const std::string& prompt,
+        int max_new_tokens
+    ) {
+        if(max_new_tokens <= 0){
+            return {};
+        }
+        transformer::tokenizer::TokenSequence tokens =
+            tokenizer_->encode(prompt);
+        if(tokens.empty()){
+            throw std::runtime_error(
+                "generate_token_ids: prompt produced no tokens"
+            );
+        }
+        reset_performance_stats();
+        int position = 0;
+        int next_token =
+            forward_prefill(
+                tokens,
+                position
+            );
+        // DEBUG: first token predicted from prefill
+        std::cout << "Prefill next token: "
+                << next_token
+                << "\n";
+        position +=
+            static_cast<int>(tokens.size());
+        std::vector<int> generated_tokens;
+        generated_tokens.reserve(
+            static_cast<size_t>(max_new_tokens)
+        );
+        for(int i = 0; i < max_new_tokens; i++){
+            if(next_token == tokenizer_->eot_id()){
+                break;
+            }
+            if(next_token == tokenizer_->eos_id()){
+                break;
+            }
+            generated_tokens.push_back(next_token);
+            int token =
+                decode_forward(
+                    next_token,
+                    position
+                );
+            // DEBUG: result of first decode step only
+            if(i == 0){
+                std::cout << "First decode token: "
+                        << token
+                        << "\n";
+            }
+            position++;
+            next_token = token;
+        }
+        return generated_tokens;
     }
     double LlamaRuntime::calculate_runtime_buffer_mb() const{
         constexpr size_t ROTARY_DIM = 32;

@@ -1,14 +1,14 @@
-# LLaMA Transformer Runtime
+# Llama Transformer Runtime
 
 **Custom CUDA Implementation and Performance Engineering of Transformer Computational Primitives**
 
-A specialized CUDA-based inference runtime for the LLaMA 3.2 1B Instruct model, featuring hand-optimized kernels, Tensor Core operations, and advanced GPU optimization techniques. This project focuses on single-batch inference with sub-4B parameter models on NVIDIA Ampere and newer GPUs.
+A specialized CUDA-based inference runtime for the Llama 3.2 1B Instruct model, featuring hand-optimized kernels, Tensor Core operations, and advanced GPU optimization techniques. This project focuses on single-batch inference with sub-4B parameter models on NVIDIA Ampere and newer GPUs.
 
 ## Project Overview
 
 ### Motivation
 
-Traditional deep learning frameworks prioritize generality and ease-of-use over raw performance for specialized workloads. This project explores the **performance ceiling** for LLaMA inference through:
+Traditional deep learning frameworks prioritize generality and ease-of-use over raw performance for specialized workloads. This project explores the **performance ceiling** for Llama inference through:
 
 - Custom CUDA kernel implementation (no framework abstractions)
 - Tensor Core exploitation via WMMA and PTX intrinsics
@@ -25,7 +25,7 @@ Traditional deep learning frameworks prioritize generality and ease-of-use over 
 
 ### Target Model
 
-**LLaMA 3.2 1B Instruct**
+**Llama 3.2 1B Instruct**
 - 1.23 billion parameters
 - BF16 precision
 - 128k token context length
@@ -169,7 +169,7 @@ llama-transformer-runtime/
 
 | Parameter | Value |
 |-----------|-------|
-| **Model** | LLaMA 3.2 1B Instruct |
+| **Model** | Llama 3.2 1B Instruct |
 | **Total Parameters** | 1.23B |
 | **Layers** | 16 |
 | **Hidden Dimension** | 2048 |
@@ -595,7 +595,7 @@ g++ -std=c++17 -O3 -I/path/to/nlohmann/json/include \
 
 ### Runtime Requirements
 
-- **Model weights**: LLaMA 3.2 1B Instruct in BF16 format
+- **Model weights**: Llama 3.2 1B Instruct in BF16 format
 - **Tokenizer configuration**: `tokenizer.json` from Hugging Face model
 - **CUDA libraries**: libcuda, libcudart, libcublas
 
@@ -827,7 +827,7 @@ MIT License — See [LICENSE](LICENSE) file for details.
 
 ## References
 
-1. **LLaMA 3 Paper**: https://arxiv.org/abs/2307.09288
+1. **Llama 3 Paper**: https://arxiv.org/abs/2307.09288
 2. **FlashAttention v1**: https://arxiv.org/abs/2205.14135
 3. **RoPE (Rotary Position Embeddings)**: https://arxiv.org/abs/2104.09864
 4. **NVIDIA WMMA Programming Guide**: https://docs.nvidia.com/cuda/

@@ -826,7 +826,7 @@ MIT License — See [LICENSE](LICENSE) file for details.
 ## References
 
 1. **Llama 3 Paper**: https://arxiv.org/abs/2307.09288
-2. **FlashAttention v1**: https://arxiv.org/abs/2205.14135
+2. **FlashAttention v2**: https://arxiv.org/abs/2307.08691
 3. **RoPE (Rotary Position Embeddings)**: https://arxiv.org/abs/2104.09864
 4. **NVIDIA WMMA Programming Guide**: https://docs.nvidia.com/cuda/
-5. **CUDA Optimization Guidelines**: NVIDIA Developer Documentation
+5. **CUDA Optimization Guidelines**: https://docs.nvidia.com/cuda/cuda-programming-guide/pdf/cuda-programming-guide.pdf

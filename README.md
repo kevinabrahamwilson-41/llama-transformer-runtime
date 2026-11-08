@@ -812,10 +812,8 @@ Detailed technical documentation is available in `docs/`:
 | KV Cache Management | ✅ Implemented |
 | Attention Block | ✅ Implemented |
 | FFN Block | ✅ Implemented |
-| Full Model Runtime | Status: Partial (primitives complete) |
-| Benchmarking Suite | Status: In progress |
-| Quantization (INT8) | Status: Planned |
-| Tensor Parallelism | Status: Planned |
+| Full Model Runtime | ✅ Implemented |
+| Benchmarking Suite | ✅ Implemented |
 
 ---
 
